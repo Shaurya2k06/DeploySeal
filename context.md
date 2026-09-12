@@ -5,7 +5,7 @@
 **Target:** AKINDO Midnight Buildathon, Wave 1  
 **Research cutoff:** 12 September 2026 (UTC)
 
-**Document status:** design context only. The current checkout is still a Vite/React, server-package, and Hardhat starter; it does not yet contain the Compact contract, broker, workflow, or deployment described below.
+**Document status:** design context plus a checked-in local vertical slice. The repository now contains the release console, local durable broker/provider emulator, protocol vectors/tests, and a compiling Compact reservation contract; the real Midnight network, GitHub attestation, AWS, Nitro, and KMS path remains credential-gated.
 
 ## 0. Current checkout and prerequisites
 
@@ -13,10 +13,10 @@ The repository was inspected on 12 September 2026. The evidence is intentionally
 
 | Area | Current evidence | Consequence |
 |---|---|---|
-| Root | `README.md` is only a title; `context.md` and `plan.md` are the design artifacts | The first implementation milestone must establish the root workspace and release evidence files |
-| Client | `client/` is the untouched Vite/React starter with `build` and `lint` scripts | Replace the demo screen with the release console, retaining the existing Vite stack |
-| Server | `server/` has a package manifest but no runtime entrypoint | Add only the coordinator/broker boundary required by the vertical slice |
-| Contracts | `contracts/` is a Hardhat Counter sample; no Compact source or Midnight dependency exists | Keep the sample green while adding the separate Compact toolchain |
+| Root | `README.md` documents the local demo; `context.md` and `plan.md` remain the design/evidence artifacts | Keep the local path reproducible while real deployment inputs are supplied |
+| Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | Keep the existing Vite stack and replace emulator calls with Midnight/AWS adapters at the real-path milestone |
+| Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, and tests | Replace the local state/provider seam with Postgres, CloudFormation, Nitro, and KMS only after the local invariants remain green |
+| Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.26 contract compiled by toolchain 0.34.0 | Keep the sample green while expanding the separate Compact circuits |
 | Secrets | `client/.env` and `contracts/.env` are empty, ignored placeholders | No credential is currently available or required for local synthetic tests |
 | Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
 

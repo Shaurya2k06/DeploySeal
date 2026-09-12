@@ -6,7 +6,7 @@ This plan is milestone-ordered. Each milestone has an objective, tasks, exit cri
 
 ## 0. Current baseline and required inputs
 
-This is an implementation plan, not a completion claim. The checkout currently contains a Vite/React starter in `client/`, a package-only `server/`, and a Hardhat Counter sample in `contracts/`; it has no Compact source, Midnight client, coordinator, broker, GitHub workflow, AWS stack, or release verifier. The current local smoke checks are:
+This is an implementation plan, not a completion claim. The checkout now contains a Vite/React release console, a local coordinator/broker emulator with protocol tests, a compiling Compact reservation slice under `contracts/deployseal/`, and the original Hardhat Counter sample. It still has no real Midnight client/network deployment, GitHub workflow, AWS stack, Nitro image, or production release verifier. The current local smoke checks are:
 
 ```sh
 npm --prefix client run build

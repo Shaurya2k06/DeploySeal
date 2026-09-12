@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+
+pragma language_version 0.26;
+
+import CompactStandardLibrary;
+
+// Minimal vertical slice: the broker emulator owns orchestration, while this
+// contract owns a committed private threshold and one-use reservation.
+struct PrivatePolicy {
+  highCves: Uint<16>;
+  maxHighCves: Uint<16>;
+}
+
+export ledger policyRoot: Bytes<32>;
+export ledger activePolicyEpoch: Counter;
+export ledger operationNullifiers: Set<Bytes<32>>;
+
+witness privatePolicy(): PrivatePolicy;
+witness privatePolicySalt(): Bytes<32>;
+
+constructor() {
+  policyRoot = persistentCommit<PrivatePolicy>(privatePolicy(), privatePolicySalt());
+  activePolicyEpoch.increment(1);
+}
+
+export circuit reserve(operationPolicyRoot: Bytes<32>, operationNullifier: Bytes<32>): [] {
+  assert(operationPolicyRoot == policyRoot, "Unknown policy root");
+  const policy = privatePolicy();
+  assert(
+    persistentCommit<PrivatePolicy>(policy, privatePolicySalt()) == operationPolicyRoot,
+    "Private policy commitment mismatch"
+  );
+  assert(policy.highCves <= policy.maxHighCves, "Private vulnerability threshold failed");
+  const publicNullifier = disclose(operationNullifier);
+  assert(!operationNullifiers.member(publicNullifier), "Operation already reserved");
+  operationNullifiers.insert(publicNullifier);
+}

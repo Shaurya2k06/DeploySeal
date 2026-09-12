@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { DeploySealBroker } from '../src/broker.js'
+import { makeOperationCore, operationDigest, operationId } from '../src/protocol.js'
+
+function makeBroker() {
+  const directory = mkdtempSync(join(tmpdir(), 'deployseal-test-'))
+  const broker = new DeploySealBroker({ statePath: join(directory, 'state.json') })
+  return { broker, directory }
+}
+
+test('lost provider response recovers once with the same token and receipt', async () => {
+  const { broker, directory } = makeBroker()
+  try {
+    const interrupted = await broker.start({ scenario: 'crash' })
+    assert.equal(interrupted.accepted, true)
+    assert.equal(interrupted.interrupted, true)
+    assert.equal(interrupted.snapshot.operation.status, 'RECOVERY_REQUIRED')
+    assert.equal(interrupted.snapshot.provider.effectCount, 1)
+
+    const operationId = interrupted.snapshot.operation.operationId
+    const recovered = await broker.recover()
+    assert.equal(recovered.recovered, true)
+    assert.equal(recovered.snapshot.operation.status, 'FINALIZED')
+    assert.equal(recovered.snapshot.provider.effectCount, 1)
+    assert.equal(recovered.snapshot.operation.provider.requestToken, operationId)
+    assert.equal('targetId' in recovered.snapshot.operation, false)
+    assert.equal('artifactDigest' in recovered.snapshot.operation, false)
+    assert.equal('commitSha' in recovered.snapshot.operation, false)
+    assert.equal('signature' in recovered.snapshot.operation.receipt, false)
+
+    const receiptHash = recovered.snapshot.operation.receipt.hash
+    const repeated = await broker.recover()
+    assert.equal(repeated.idempotent, true)
+    assert.equal(repeated.snapshot.operation.receipt.hash, receiptHash)
+
+    const verified = await broker.verifyReceipt()
+    assert.equal(verified.valid, true)
+
+    const originalTarget = broker.currentOperation().receipt.actualTarget
+    broker.currentOperation().receipt.actualTarget = 'tampered-target'
+    assert.equal((await broker.verifyReceipt()).valid, false)
+    broker.currentOperation().receipt.actualTarget = originalTarget
+
+    const replay = await broker.replay()
+    assert.equal(replay.accepted, false)
+    assert.equal(replay.code, 'OPERATION_ALREADY_CONSUMED')
+    assert.equal(replay.snapshot.provider.effectCount, 1)
+
+    const invalid = await broker.start({ scenario: 'invalid' })
+    assert.equal(invalid.accepted, false)
+    assert.equal(invalid.code, 'POLICY_NOT_SATISFIED')
+    assert.equal(invalid.snapshot.provider.effectCount, 1)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('policy failure happens before provider invocation', async () => {
+  const { broker, directory } = makeBroker()
+  try {
+    const result = await broker.start({ scenario: 'invalid' })
+    assert.equal(result.accepted, false)
+    assert.equal(result.code, 'POLICY_NOT_SATISFIED')
+    assert.equal(result.snapshot.operation, null)
+    assert.equal(result.snapshot.provider.effectCount, 0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('operation identity is canonical and provider-safe', () => {
+  const core = makeOperationCore({ nonce: '0123456789abcdef0123456789abcdef' })
+  const digest = operationDigest(core).toString('hex')
+  const id = operationId(core)
+  assert.match(digest, /^[0-9a-f]{64}$/u)
+  assert.equal(id, digest)
+  assert.match(id, /^[A-Za-z0-9][-A-Za-z0-9]*$/u)
+  assert.equal(id.length, 64)
+})
+
+test('audit disclosure returns only selected fields', async () => {
+  const { broker, directory } = makeBroker()
+  try {
+    await broker.start({ scenario: 'happy' })
+    const result = await broker.disclose(['policyEpoch', 'outcome', 'not-allowed'])
+    assert.deepEqual(result.disclosure.fields, ['policyEpoch', 'outcome'])
+    assert.deepEqual(Object.keys(result.disclosure.values), ['policyEpoch', 'outcome'])
+    assert.equal(result.snapshot.auditCount, 1)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

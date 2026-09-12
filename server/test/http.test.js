@@ -1,0 +1,49 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
+test('HTTP demo completes recovery and keeps the provider effect at one', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'deployseal-http-'))
+  const previousStatePath = process.env.DEPLOYSEAL_STATE_PATH
+  process.env.DEPLOYSEAL_STATE_PATH = join(directory, 'state.json')
+  const { server } = await import('../src/index.js?http-test')
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    const address = server.address()
+    const base = `http://127.0.0.1:${address.port}`
+    const post = async (path, body = {}) => {
+      const response = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      return { status: response.status, body: await response.json() }
+    }
+
+    const start = await post('/api/release/start', { scenario: 'crash' })
+    assert.equal(start.status, 200)
+    assert.equal(start.body.snapshot.operation.status, 'RECOVERY_REQUIRED')
+    assert.equal(start.body.snapshot.provider.effectCount, 1)
+
+    const recover = await post('/api/release/recover')
+    assert.equal(recover.body.snapshot.operation.status, 'FINALIZED')
+    assert.equal(recover.body.snapshot.provider.effectCount, 1)
+    assert.equal((await post('/api/receipt/verify')).body.valid, true)
+    assert.equal((await post('/api/release/replay')).body.code, 'OPERATION_ALREADY_CONSUMED')
+
+    const disclosure = await post('/api/audit/disclose', { fields: ['policyEpoch', 'privatePolicy', 'outcome'] })
+    assert.deepEqual(disclosure.body.disclosure.fields, ['policyEpoch', 'outcome'])
+    assert.equal((await post('/api/reset')).body.snapshot.operation, null)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    if (previousStatePath === undefined) delete process.env.DEPLOYSEAL_STATE_PATH
+    else process.env.DEPLOYSEAL_STATE_PATH = previousStatePath
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

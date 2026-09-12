@@ -1,0 +1,42 @@
+name: DeploySeal checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+            contracts/deployseal/package-lock.json
+
+      - run: npm ci --prefix server
+      - run: npm ci --prefix client
+      - run: npm ci --prefix contracts/deployseal
+
+      - name: Install Compact tool
+        run: |
+          COMPACT_UNMANAGED_INSTALL="$RUNNER_TEMP/compact" curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | COMPACT_UNMANAGED_INSTALL="$RUNNER_TEMP/compact" sh
+          echo "$RUNNER_TEMP/compact" >> "$GITHUB_PATH"
+
+      - name: Select Compact toolchain
+        run: compact update 0.34.0
+
+      - run: npm --prefix contracts/deployseal run compact
+      - run: npm --prefix contracts/deployseal test
+      - run: npm --prefix server test
+      - run: npm --prefix client run lint
+      - run: npm --prefix client run build
