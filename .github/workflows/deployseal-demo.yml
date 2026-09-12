@@ -68,6 +68,7 @@ jobs:
       - name: Build signed BuildFact
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPLOYSEAL_BUILD_FACT_TTL_SECONDS: 86400
         run: |
           node server/src/build-fact.js \
             --artifact deployseal-demo.artifact \

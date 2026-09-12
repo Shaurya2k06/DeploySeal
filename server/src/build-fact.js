@@ -54,6 +54,7 @@ const fact = buildFactFromVerifiedInputs({
   adapterKeyId: required(options, 'adapter-key-id'),
   adapterPrivateKey: privateKey,
   adapterPublicKey,
+  validForSeconds: options['valid-for-seconds'] ? Number(options['valid-for-seconds']) : process.env.DEPLOYSEAL_BUILD_FACT_TTL_SECONDS ? Number(process.env.DEPLOYSEAL_BUILD_FACT_TTL_SECONDS) : null,
 })
 const outputPath = options.output || 'build-fact.json'
 writeFileSync(outputPath, `${JSON.stringify(fact, null, 2)}\n`, { mode: 0o600 })

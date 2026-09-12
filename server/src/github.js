@@ -142,9 +142,14 @@ export function buildFactFromVerifiedInputs({
   adapterKeyId,
   adapterPrivateKey,
   adapterPublicKey,
+  validForSeconds = null,
 }) {
   if (!adapterKeyId) throw failure('ADAPTER_KEY', 'BuildFact adapter key id is required')
   assertAttestationBinding(attestation, claims, expected)
+  if (validForSeconds !== null && (!Number.isSafeInteger(validForSeconds) || validForSeconds < 60 || validForSeconds > 604800)) {
+    throw failure('BUILD_FACT_TIME_INVALID', 'BuildFact retention must be between 60 seconds and 7 days')
+  }
+  const issuedAt = Number(claims.iat)
   const fact = {
     version: 1,
     issuerHash: sha256Hex(claims.iss),
@@ -157,8 +162,8 @@ export function buildFactFromVerifiedInputs({
     runAttempt: Number(claims.run_attempt),
     commitSha: claims.sha,
     artifactDigest: digestValue(attestation.subjectDigest),
-    issuedAt: Number(claims.iat),
-    expiresAt: Number(claims.exp),
+    issuedAt,
+    expiresAt: validForSeconds === null ? Number(claims.exp) : issuedAt + validForSeconds,
     originalOidcHash: sha256Hex(token),
     originalAttestationHash: sha256Hex(JSON.stringify(attestation.raw || attestation)),
     adapterKeyId,

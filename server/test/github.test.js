@@ -72,6 +72,24 @@ test('GitHub OIDC verification binds immutable run claims and a signed BuildFact
   assert.equal(fact.adapterPublicKey, adapterKeys.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'))
   assert.doesNotThrow(() => validateBuildFact(fact, 1100))
   assert.throws(() => validateBuildFact(fact, 1400), /outside its validity window/u)
+  const retainedFact = buildFactFromVerifiedInputs({
+    token: tokenValue,
+    claims: verifiedClaims,
+    attestation: {
+      verified: true,
+      subjectDigest: `sha256:${'b'.repeat(64)}`,
+      repository: 'Shaurya2k06/DeploySeal',
+      workflow: claims.workflow,
+      commitSha: claims.sha,
+      runId: claims.run_id,
+      runAttempt: claims.run_attempt,
+    },
+    expected: { artifactDigest: `sha256:${'b'.repeat(64)}`, repository: 'Shaurya2k06/DeploySeal' },
+    adapterKeyId: 'build-adapter-1',
+    adapterPrivateKey: adapterKeys.privateKey,
+    validForSeconds: 86400,
+  })
+  assert.doesNotThrow(() => validateBuildFact(retainedFact, 86400))
   assert.equal(verifyBuildFact({ ...fact, artifactDigest: 'c'.repeat(64) }, adapterKeys.publicKey), false)
   assert.equal(verifyBuildFact({ ...fact, adapterPublicKey: 'bad-key' }, adapterKeys.publicKey), false)
   await assert.rejects(
