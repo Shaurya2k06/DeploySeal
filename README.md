@@ -50,7 +50,7 @@ compact update 0.31.1
 npm --prefix contracts/deployseal run compact
 ```
 
-The Preprod client uses ledger-v8 8.1.2, MidnightJS 4.1.1, and Wallet SDK
+The Preprod client uses ledger-v8 8.1.0, MidnightJS 4.1.1, and Wallet SDK
 DUST 4.2.0. Its first full DUST sync can take a few minutes; the encrypted
 wallet snapshot under `.deployseal-midnight-level-db/` makes later runs resume
 from the latest indexed event.
