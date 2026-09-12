@@ -206,7 +206,6 @@ export class AzureArmProvider {
         scope: ARM_SCOPE,
         method: 'PUT',
         body: {
-          location: this.location,
           properties: {
             mode: 'Incremental',
             template: deploymentTemplate(),
