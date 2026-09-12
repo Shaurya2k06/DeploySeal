@@ -10,7 +10,7 @@ curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
 
-install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/secrets /var/lib/deployseal/midnight
+install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/secrets /var/lib/deployseal/midnight /var/lib/deployseal/attestation
 if [ ! -d /opt/deployseal/.git ]; then
   git clone --depth 1 https://github.com/Shaurya2k06/DeploySeal.git /opt/deployseal
 else
@@ -72,11 +72,11 @@ AZURE_KEY_VAULT_URL=https://deploysealkv260912.vault.azure.net
 DEPLOYSEAL_AZURE_KEY_NAME=deployseal-receipt
 DEPLOYSEAL_AZURE_KEY_ALGORITHM=PS256
 DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT=https://deploysealmaa260912.eus.attest.azure.net/attest/SevSnpVm?api-version=2022-08-01
-DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE=/etc/deployseal/attestation.jwt
+DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE=/var/lib/deployseal/attestation/token.jwt
 DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE=/etc/deployseal/allowed-measurements
-DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE=/etc/deployseal/attestation.user-data
+DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE=/var/lib/deployseal/attestation/user-data
 DEPLOYSEAL_AZURE_ATTESTATION_HELPER=/usr/local/bin/deployseal-attest
-DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO=true
+DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO=false
 DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS=300
 DEPLOYSEAL_REQUIRE_BUILD_FACT=true
 DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION=true
@@ -120,25 +120,23 @@ set -Eeuo pipefail
 set -a
 source /etc/deployseal/server.env
 set +a
-install -d -o root -g deployseal -m 0750 /etc/deployseal
-temporary=/etc/deployseal/attestation.jwt.tmp
+install -d -o deployseal -g deployseal -m 0750 /var/lib/deployseal/attestation
+temporary=/var/lib/deployseal/attestation/token.jwt.tmp
 user_data=${1:-$(openssl rand -hex 64)}
 if [[ ! "$user_data" =~ ^[0-9a-f]{128}$ ]]; then
   printf '%s\n' 'attestation challenge must be 64-byte lowercase hex' >&2
   exit 2
 fi
-printf '%s\n' "$user_data" >/etc/deployseal/attestation.user-data.tmp
-chown root:deployseal /etc/deployseal/attestation.user-data.tmp
-chmod 0640 /etc/deployseal/attestation.user-data.tmp
+printf '%s\n' "$user_data" >/var/lib/deployseal/attestation/user-data.tmp
+chmod 0600 /var/lib/deployseal/attestation/user-data.tmp
 for _ in $(seq 1 12); do
-  raw=$(/usr/local/bin/azure-guest-attest tee-attest --endpoint "$DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT" --user-data "hex:$user_data" 2>>/var/log/deployseal-attestation.log || true)
+  raw=$(/usr/local/bin/azure-guest-attest tee-attest --endpoint "$DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT" --user-data "hex:$user_data" 2>>/var/lib/deployseal/attestation/attestation.log || true)
   token=$(printf '%s' "$raw" | grep -Eo '[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -n 1 || true)
   if [ -n "$token" ]; then
     printf '%s\n' "$token" >"$temporary"
-    chown root:deployseal "$temporary"
-    chmod 0640 "$temporary"
-    mv -f "$temporary" /etc/deployseal/attestation.jwt
-    mv -f /etc/deployseal/attestation.user-data.tmp /etc/deployseal/attestation.user-data
+    chmod 0600 "$temporary"
+    mv -f "$temporary" /var/lib/deployseal/attestation/token.jwt
+    mv -f /var/lib/deployseal/attestation/user-data.tmp /var/lib/deployseal/attestation/user-data
     exit 0
   fi
   sleep 5
@@ -147,12 +145,6 @@ printf '%s\n' 'Azure SEV-SNP attestation token was not produced' >&2
 exit 1
 EOF
 chmod 0755 /usr/local/bin/deployseal-attest
-
-cat >/etc/sudoers.d/deployseal-attestation <<'EOF'
-deployseal ALL=(root) NOPASSWD: /usr/local/bin/deployseal-attest *
-EOF
-chmod 0440 /etc/sudoers.d/deployseal-attestation
-visudo -cf /etc/sudoers.d/deployseal-attestation
 
 cat >/etc/systemd/system/deployseal-proof.service <<'EOF'
 [Unit]
@@ -250,7 +242,7 @@ Type=simple
 User=deployseal
 WorkingDirectory=/opt/deployseal
 EnvironmentFile=/etc/deployseal/server.env
-ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest
+ExecStartPre=/usr/local/bin/deployseal-attest
 ExecStart=/usr/bin/node /opt/deployseal/server/src/azure-start.js
 Restart=always
 RestartSec=5
@@ -268,7 +260,7 @@ systemctl enable deployseal-attestation.service deployseal.service deployseal-bu
 systemctl start deployseal-build-fact-refresh.timer
 systemctl restart deployseal-attestation.service
 if [ ! -s /etc/deployseal/allowed-measurements ]; then
-  node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const token=readFileSync('/etc/deployseal/attestation.jwt','utf8').trim(); const p=JSON.parse(Buffer.from(token.split('.')[1], 'base64url')); const m=p['x-ms-sevsnpvm-launchmeasurement']; if (!m) throw new Error('attestation measurement missing'); writeFileSync('/etc/deployseal/allowed-measurements', m.toLowerCase()+'\n', { mode: 0o640 });"
+  node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const token=readFileSync('/var/lib/deployseal/attestation/token.jwt','utf8').trim(); const p=JSON.parse(Buffer.from(token.split('.')[1], 'base64url')); const m=p['x-ms-sevsnpvm-launchmeasurement']; if (!m) throw new Error('attestation measurement missing'); writeFileSync('/etc/deployseal/allowed-measurements', m.toLowerCase()+'\n', { mode: 0o640 });"
 fi
 chown root:deployseal /etc/deployseal/allowed-measurements
 chmod 0640 /etc/deployseal/allowed-measurements
