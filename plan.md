@@ -4,6 +4,28 @@
 
 This plan is milestone-ordered. Each milestone has an objective, tasks, exit criteria, and judge-visible evidence. Finish the narrow vertical slice before adding policy fields, providers, or presentation polish.
 
+## 0. Current baseline and required inputs
+
+This is an implementation plan, not a completion claim. The checkout currently contains a Vite/React starter in `client/`, a package-only `server/`, and a Hardhat Counter sample in `contracts/`; it has no Compact source, Midnight client, coordinator, broker, GitHub workflow, AWS stack, or release verifier. The current local smoke checks are:
+
+```sh
+npm --prefix client run build
+npm --prefix client run lint
+npm --prefix contracts exec hardhat test
+```
+
+Those checks cover only the starter baseline. The DeploySeal acceptance test below is not satisfied until the milestone evidence exists.
+
+| Input | Needed for | Who must provide it | Safe fallback |
+|---|---|---|---|
+| Compact compiler, compatible MidnightJS line, and local-dev/Testkit | Contract compile and deterministic local tests | Implementation environment; resolve from the official example and pin it | Synthetic protocol tests can start first; no Compact completion claim |
+| Midnight wallet, faucet/funds, network, indexer, and proof endpoints | Preprod deploy and judge-visible transactions | Project owner or network operator | Local-dev/Testkit only |
+| GitHub repository/workflow permissions, OIDC configuration, and artifact-attestation capability | Real BuildFact generation | Repository owner/admin | Signed synthetic BuildFact fixtures |
+| Isolated AWS account/region, demo stack, scoped IAM role, CloudTrail access, KMS key, and Nitro-capable host | Real provider effect, receipt, and attestation demo | AWS account owner | Local idempotent-provider emulator; never use an unapproved account |
+| One repository, artifact, target, policy vector, and disclosure policy | Reproducible acceptance test | Product owner; use synthetic defaults if no choice is supplied | The defaults must be recorded at Milestone 0 |
+
+Credentials and private evidence are never committed or pasted into the repository. The empty ignored `.env` files may hold local endpoints during development, but secret values belong in the runtime secret store or short-lived environment, not in source, logs, browser storage, or CI artifacts.
+
 ## 1. Winning acceptance test
 
 The build is successful when this exact scenario passes:
@@ -60,6 +82,8 @@ flowchart TD
 | Frontend/API | Orchestration and presentation | Any security decision; all decisions are independently verified |
 
 ### 2.2 Repository layout
+
+The layout below is the target state, not the current checkout. Milestone 0 adds the root workspace and migrates the existing `client/`, `server/`, and `contracts/` projects without deleting their working lockfiles until the new workspace checks are green.
 
 ```text
 deployseal/
@@ -130,7 +154,7 @@ Do not commit raw tokens, credentials, policy plaintext, AWS account details, or
 
 ## 3. Version and dependency strategy
 
-Use one tested Midnight dependency line from the current official example, and commit the lockfile. At the research cutoff, the official bulletin-board example exposed the `@midnight-ntwrk/midnight-js-*` 4.1.1 line and the current docs described Compact toolchain 0.31.0 / Compact runtime 0.19.x. Confirm compatibility against the [official example](https://github.com/midnightntwrk/example-bboard), [release notes](https://docs.midnight.network/relnotes/overview), and [Compact 0.31.0 note](https://docs.midnight.network/relnotes/compact/toolchain-0.31.0) before freezing versions.
+Use one tested Midnight dependency line from the current official example and commit the lockfile. Do not treat version numbers in research notes as implementation requirements: resolve the compatible Compact compiler, runtime, MidnightJS, wallet, and local-dev versions from the [official example](https://github.com/midnightntwrk/example-bboard) and [release notes](https://docs.midnight.network/relnotes/overview) at Milestone 0, then record the exact set in `.tool-versions` and the release manifest. Rebuild the contract and rerun vectors after any version change.
 
 Expected Midnight packages/capabilities:
 
@@ -144,7 +168,7 @@ Expected Midnight packages/capabilities:
 
 Other dependencies:
 
-- TypeScript, pnpm workspaces, React/Vite or Next.js for the console;
+- TypeScript, pnpm workspaces, and the existing React/Vite client for the console;
 - AWS SDK v3 CloudFormation, STS, KMS, CloudTrail, and Nitro Enclaves tooling;
 - a deterministic RFC 8949 CBOR implementation with canonical-encoding tests;
 - JOSE/JWT verification for GitHub OIDC;
@@ -276,13 +300,21 @@ The adapter verifies GitHub's JWT and attestation before signing. The circuit ve
 }
 ```
 
-`operation_id` is the 43-character unpadded base64url encoding of the canonical SHA-256 digest. This satisfies CloudFormation's documented 1–128 character, alphanumeric-first token pattern; lock the exact bytes and text in a golden vector. The broker recomputes it; the frontend cannot choose it. Persist the nonce before the first contract call and reuse it on every retry ([AWS API reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html)).
+Derive two values from the canonical operation bytes:
+
+```text
+operation_digest = SHA-256("DeploySeal\0OperationV1\0" || canonicalCBOR(operationCore))
+operation_id = lowercase_hex(operation_digest)
+```
+
+`operation_digest` is 32 bytes and is the Compact/state-fixture key. `operation_id` is its 64-character lowercase hexadecimal representation, so it satisfies CloudFormation's `[a-zA-Z0-9][-a-zA-Z0-9]*` pattern and its 1–128 character limit. Lock both values in a golden vector, have the broker recompute them, and never let the frontend choose either value. Persist the nonce before the first contract call and reuse it on every retry ([AWS API reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html)).
 
 ### 4.6 `ReceiptV1`
 
 ```text
 {
   version,
+  operationDigest,
   operationId,
   permitHash,
   providerId,
@@ -359,32 +391,34 @@ export circuit reserve(
 ): ReserveResult
 
 export circuit markSubmitting(
-  operationId: Bytes<32>,
+  operationDigest: Bytes<32>,
   brokerLeaseCommitment: Bytes<32>,
   brokerAuth: BrokerAuthWitness
 ): []
 
 export circuit finalize(
-  operationId: Bytes<32>,
+  operationDigest: Bytes<32>,
   receipt: ReceiptWitness,
   receiptKeyPath: MerkleTreePath
 ): []
 
 export circuit markFailed(
-  operationId: Bytes<32>,
+  operationDigest: Bytes<32>,
   failureReceipt: ReceiptWitness
 ): []
 
 export circuit expireUnsubmitted(
-  operationId: Bytes<32>
+  operationDigest: Bytes<32>
 ): []
 
-export circuit discloseAudit(
-  operationId: Bytes<32>,
-  selector: DisclosureSelector,
-  opening: DisclosureWitness
-): DisclosureReceipt
+export circuit recordDisclosureRequest(
+  operationDigest: Bytes<32>,
+  selectorCommitment: Bytes<32>,
+  purposeHash: Bytes<32>
+): []
 ```
+
+The selected values for an auditor are produced by an off-chain disclosure bundle and verified against the operation commitment. `disclose()` must not be used to make an auditor-only value public; it is reserved for reviewed public transcript/ledger disclosures.
 
 ### 5.4 `reserve` checks
 
@@ -392,7 +426,7 @@ Order checks for clarity, not secrecy; user-facing errors must remain uniform.
 
 1. Recompute `policyRoot` from private policy + salt; equal the root at `policyEpoch`.
 2. Require `policyEpoch == activePolicyEpoch` unless an explicitly documented grace rule applies.
-3. Recompute the canonical operation ID and operation nullifier.
+3. Recompute the canonical operation digest, provider-safe operation ID, and operation nullifier.
 4. Require operation nullifier absent; if strict-rerun mode, require intent nullifier absent.
 5. Validate `BuildFactV1` signature/key path/schema/expiry.
 6. Bind immutable repo ID, workflow, run/attempt, commit, artifact digest, target/environment, provider, and epoch.
@@ -410,7 +444,7 @@ Order checks for clarity, not secrecy; user-facing errors must remain uniform.
 1. Operation exists in `SUBMITTING` or `RECOVERY_REQUIRED`.
 2. Recompute canonical receipt hash and verify the receipt signature in-circuit (or through a narrowly specified signed-fact adapter if signature representation demands it).
 3. Verify receipt key membership at the bound epoch.
-4. Require `operationId`, `permitHash`, provider, actual target, and actual artifact digest to match the reservation.
+4. Require the receipt's `operationDigest`/`operationId` pair, `permitHash`, provider, actual target, and actual artifact digest to match the reservation.
 5. Require enclave measurement membership at the bound epoch.
 6. Require allowed terminal status.
 7. Store exactly one receipt hash and final timestamp.
@@ -453,7 +487,8 @@ Database table outline:
 
 ```text
 operations(
-  operation_id PK,
+  operation_digest PK,
+  operation_id UNIQUE NOT NULL,
   permit_hash UNIQUE NOT NULL,
   immutable_binding_hash NOT NULL,
   provider_id NOT NULL,
@@ -542,6 +577,7 @@ Accessibility and robustness:
 
 Tasks:
 
+- create the root workspace, Apache-2.0 license, pinned tool versions, and CI entrypoint while preserving the existing starter commands;
 - write `THREAT_MODEL.md` with assets, actors, trust anchors, side channels, and non-goals;
 - define exact “one bound operation” semantics and the AWS retention/recovery assumptions;
 - choose one GitHub repository/workflow, one artifact type, one AWS account/region/stack, and one policy vector;
@@ -570,7 +606,7 @@ Exit criteria:
 
 - exact bytes and hashes are stable across two implementations;
 - malformed, duplicate-key, reordered, overlong, negative, floating-point, and unknown-version encodings fail;
-- operation ID satisfies verified CloudFormation token constraints.
+- both operation representations are stable: a 32-byte `operation_digest` and a 64-character lowercase-hex `operation_id` whose full value matches the verified CloudFormation token constraint.
 
 Judge evidence: `packages/test-vectors`, CLI output, CI job.
 
@@ -603,13 +639,13 @@ Tasks:
 - add key, policy, broker-measurement, and receipt-key rotation/revocation epochs;
 - implement uniform failure surface;
 - implement optional strict intent nullifier behind policy flag;
-- implement audit disclosure selector and disclosure nullifier.
+- implement the on-chain disclosure-request commitment and the off-chain scoped disclosure verifier.
 
 Exit criteria:
 
 - every PolicyV1 field has positive, boundary, and negative tests;
 - stale root/key/schema and duplicate approver attempts fail;
-- disclosure of field A cannot open field B or replay under another purpose/auditor;
+- disclosure of field A cannot open field B or replay under another purpose/auditor, and no auditor-only value is written to the public ledger;
 - proof performance is recorded for minimum/maximum bounded inputs.
 
 Judge evidence: policy matrix, property-test report, disclosure demo.
@@ -1035,7 +1071,7 @@ Stop adding features and fix the critical path if any is true:
 
 - Compact does not compile from a clean checkout.
 - A private witness can alter authorization without a checked commitment/signature/root.
-- Operation ID bytes differ between frontend, contract fixture, broker, and verifier.
+- The `operation_digest`/`operation_id` pair differs between frontend, contract fixture, broker, and verifier.
 - CloudFormation retry semantics are not demonstrated with the exact chosen API.
 - Any recovery path creates a new provider token.
 - Accepted-unknown can expire or be reauthorized as a fresh operation.

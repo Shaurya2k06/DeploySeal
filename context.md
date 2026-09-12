@@ -5,6 +5,23 @@
 **Target:** AKINDO Midnight Buildathon, Wave 1  
 **Research cutoff:** 12 September 2026 (UTC)
 
+**Document status:** design context only. The current checkout is still a Vite/React, server-package, and Hardhat starter; it does not yet contain the Compact contract, broker, workflow, or deployment described below.
+
+## 0. Current checkout and prerequisites
+
+The repository was inspected on 12 September 2026. The evidence is intentionally recorded here so the target architecture is not mistaken for shipped functionality.
+
+| Area | Current evidence | Consequence |
+|---|---|---|
+| Root | `README.md` is only a title; `context.md` and `plan.md` are the design artifacts | The first implementation milestone must establish the root workspace and release evidence files |
+| Client | `client/` is the untouched Vite/React starter with `build` and `lint` scripts | Replace the demo screen with the release console, retaining the existing Vite stack |
+| Server | `server/` has a package manifest but no runtime entrypoint | Add only the coordinator/broker boundary required by the vertical slice |
+| Contracts | `contracts/` is a Hardhat Counter sample; no Compact source or Midnight dependency exists | Keep the sample green while adding the separate Compact toolchain |
+| Secrets | `client/.env` and `contracts/.env` are empty, ignored placeholders | No credential is currently available or required for local synthetic tests |
+| Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
+
+The real path additionally needs a Compact compiler/local-dev or Testkit setup, a funded Midnight wallet and Preprod endpoints, GitHub workflow permissions with OIDC and artifact-attestation support, and an isolated AWS account with scoped CloudFormation, CloudTrail, KMS, and Nitro access. Those credentials, private policy/evidence, cloud account, network funds, and repository-admin permissions must come from the project owner; until then, use synthetic fixtures and the local broker/provider emulator.
+
 ## 1. Executive decision
 
 DeploySeal is the recommended submission.
@@ -180,7 +197,7 @@ For the demonstration, define `PolicyV1` as canonical CBOR with fixed integer ke
 - permit TTL, policy epoch, broker measurement allowlist, and receipt-key allowlist;
 - which fields may be selectively disclosed to which audit role.
 
-`policyRoot = persistentCommit("DeploySeal/PolicyV1", canonicalPolicy, policySalt)`.
+`policyRoot = persistentCommit(domainSeparatedCanonicalPolicy, policySalt)`, where `domainSeparatedCanonicalPolicy` encodes `DeploySeal/PolicyV1` as part of the committed value. The domain is not a third argument to `persistentCommit`.
 
 Never call `disclose(policy)` or `disclose(policySalt)`. Only the root, epoch, and intentionally public metadata reach the ledger.
 
@@ -203,14 +220,16 @@ operationCore = {
   nonce128
 }
 
-operation_id = base64url(SHA-256(
+operation_digest = SHA-256(
   "DeploySeal\0OperationV1\0" || canonicalCBOR(operationCore)
-))
+)
+
+operation_id = lowercase_hex(operation_digest)
 ```
 
 Generate `nonce128` once and persist it before reservation. Retries reuse it. A changed run attempt, artifact, target, policy epoch, or nonce is a new operation. If the product needs “same intent globally at most once,” maintain a separate intent nullifier over repository, target, environment, commit, and digest.
 
-AWS specifies `ClientRequestToken` as 1–128 characters matching `[a-zA-Z0-9][-a-zA-Z0-9]*` and describes it as the identifier to reuse for `ExecuteChangeSet` retries. Unpadded base64url of a SHA-256 digest is 43 allowed characters and begins alphanumerically, so use that exact encoding and lock it with a golden vector ([AWS API reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html)).
+AWS specifies `ClientRequestToken` as 1–128 characters matching `[a-zA-Z0-9][-a-zA-Z0-9]*` and describes it as the identifier to reuse for `ExecuteChangeSet` retries. Lowercase hexadecimal encoding of the 32-byte digest is a 64-character, fully alphanumeric token, so it satisfies that pattern without a custom alphabet. Lock both `operation_digest` and `operation_id` with a golden vector and reject any token that fails the provider pattern ([AWS API reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html)).
 
 ## 6. Why Midnight is structurally necessary
 
@@ -270,6 +289,7 @@ disclosureNullifiers: Set<Bytes<32>>
 
 ```text
 {
+  operationDigest,
   operationId,
   policyEpoch,
   intentCommitment,
@@ -282,7 +302,9 @@ disclosureNullifiers: Set<Bytes<32>>
 }
 ```
 
-Do not publish repository, target, environment, commit, or digest by default. For the hackathon demo, the UI may show those values locally and disclose selected ones with user consent.
+The protocol keeps both representations: `operation_digest` is the 32-byte canonical hash used by Compact/state fixtures, while `operation_id` is the provider-safe string derived from it above. Every implementation and golden vector must derive the same pair; neither value may be accepted as an arbitrary caller-supplied replacement for the other.
+
+Do not publish the operation preimage: repository, target, environment, commit, or artifact digest remain private by default. The `operation_digest`/`operation_id` pair is an intentional pseudonymous public identifier required for state lookup and provider recovery; it must not be treated as a disclosure of its preimage.
 
 ### 7.2 States
 
@@ -316,11 +338,13 @@ The broker maintains a local durable mirror with compare-and-set transitions. Mi
 1. `registerPolicy(newRoot, epoch, activationTime)` — governance-authorized, monotonic policy update.
 2. `rotateAttestorRoot(newRoot, epoch)` — monotonic key/root rotation with explicit effective time.
 3. `reserve(operationPublic, operationPrivate)` — proves policy/evidence/approval/OIDC/artifact/target predicates and inserts the nullifier atomically.
-4. `markSubmitting(operationId, brokerLeaseCommitment)` — binds an authorized broker attempt without exposing credentials.
-5. `finalize(operationId, receiptPublic, receiptPrivate)` — verifies receipt key membership/signature and binding; stores receipt hash.
-6. `markFailed(operationId, signedFailure)` — records a provider-authenticated terminal rejection.
-7. `expireUnsubmitted(operationId)` — uses chain block time and proves no submission marker.
-8. `discloseAudit(operationId, disclosureSelector, disclosedFields)` — proves selected fields open committed private facts and records a purpose-bound disclosure nullifier.
+4. `markSubmitting(operationDigest, brokerLeaseCommitment)` — binds an authorized broker attempt without exposing credentials.
+5. `finalize(operationDigest, receiptPublic, receiptPrivate)` — verifies receipt key membership/signature and binding; stores receipt hash.
+6. `markFailed(operationDigest, signedFailure)` — records a provider-authenticated terminal rejection.
+7. `expireUnsubmitted(operationDigest)` — uses chain block time and proves no submission marker.
+8. `recordDisclosureRequest(operationDigest, selectorCommitment, purposeHash)` — records a purpose-bound request; selected audit values are delivered in an off-chain disclosure bundle verified against the committed operation.
+
+An auditor-only disclosure must not be implemented by calling `disclose()` on a public ledger field. In Compact, `disclose()` marks a value as allowed to enter the public transcript/ledger; recipient-scoped disclosure is an off-chain proof/opening flow with only its request or receipt commitment recorded publicly.
 
 The first build can merge `markSubmitting` into the broker flow if the contract/API shape demands it, but must preserve the “never expire accepted-unknown” invariant.
 
@@ -376,6 +400,7 @@ Canonical `ReceiptV1`:
 ```text
 {
   version,
+  operationDigest,
   operationId,
   permitHash,
   providerId,
@@ -408,6 +433,7 @@ Do not claim distributed atomicity or universal exactly-once delivery. Claim exa
 
 - versioned roots and epochs;
 - pseudorandom operation/intent commitments or nullifiers;
+- the pseudonymous `operation_digest`/`operation_id` pair required for lookup and provider recovery;
 - coarse operation status;
 - chain timestamps/deadlines;
 - receipt hash and receipt-key epoch.
@@ -415,7 +441,7 @@ Do not claim distributed atomicity or universal exactly-once delivery. Claim exa
 ### Private by default
 
 - raw OIDC token and artifact-attestation bundle;
-- repository, workflow, actor, target, environment, commit, and digest unless disclosed;
+- repository, workflow, actor, target, environment, commit, and artifact digest unless disclosed;
 - SBOM, packages, CVEs, scanner output, model benchmarks/scores, policy thresholds;
 - residency facts, approver identities/signatures, and internal policy text;
 - AWS credentials, KMS/HSM private material, raw Nitro attestation, and full receipt.
@@ -490,7 +516,7 @@ The submission is only ready when a cold evaluator can:
 - [Kachina](https://docs.midnight.network/concepts/kachina)
 - [ZSwap](https://docs.midnight.network/concepts/zswap)
 - [Release notes](https://docs.midnight.network/relnotes/overview)
-- [Compact toolchain 0.31.0 release note](https://docs.midnight.network/relnotes/compact/toolchain-0.31.0)
+- [Compact toolchain release notes](https://docs.midnight.network/relnotes/overview)
 
 ### Buildathon and ecosystem
 
