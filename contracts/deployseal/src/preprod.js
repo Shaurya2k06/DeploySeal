@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws'
 import * as Rx from 'rxjs'
 import * as ledger from '@midnight-ntwrk/ledger-v8'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { ApiPromise, WsProvider } from '@polkadot/api'
 import { CompiledContract } from '@midnight-ntwrk/compact-js'
 import { DeploySeal, witnesses } from './index.js'
@@ -8,18 +10,19 @@ import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js/network-
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js/contracts'
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider'
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider'
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider'
+import { StorageEncryption, levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider'
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider'
-import { WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade'
-import { DustWallet } from '@midnight-ntwrk/wallet-sdk-dust-wallet'
-import { HDWallet, Roles } from '@midnight-ntwrk/wallet-sdk-hd'
-import { ShieldedWallet } from '@midnight-ntwrk/wallet-sdk-shielded'
+import { validatePassword } from '@midnight-ntwrk/midnight-js-utils'
+import { WalletFacade } from '@midnightntwrk/wallet-sdk-facade'
+import { DustWallet } from '@midnightntwrk/wallet-sdk-dust-wallet'
+import { HDWallet, Roles } from '@midnightntwrk/wallet-sdk-hd'
+import { ShieldedWallet } from '@midnightntwrk/wallet-sdk-shielded'
 import {
   createKeystore,
-  InMemoryTransactionHistoryStorage,
   PublicKey,
   UnshieldedWallet,
-} from '@midnight-ntwrk/wallet-sdk-unshielded-wallet'
+} from '@midnightntwrk/wallet-sdk-unshielded-wallet'
+import { InMemoryTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk-abstractions'
 import { operationId, operationNullifier } from '../../../server/src/protocol.js'
 
 globalThis.WebSocket = WebSocket
@@ -28,10 +31,11 @@ const root = new URL('.', import.meta.url).pathname
 const zkConfigPath = `${root}managed/deployseal`
 const privateStateId = process.env.DEPLOYSEAL_MIDNIGHT_STATE_ID || 'deployseal-private-state'
 const privateStateDb = process.env.DEPLOYSEAL_MIDNIGHT_DB_PATH || new URL('../../../.deployseal-midnight-level-db', import.meta.url).pathname
+const dustStatePath = process.env.DEPLOYSEAL_MIDNIGHT_DUST_STATE_PATH || `${privateStateDb}/dust-wallet-state.json`
 const network = process.env.DEPLOYSEAL_MIDNIGHT_NETWORK || 'preprod'
 const endpoints = {
-  indexer: process.env.DEPLOYSEAL_MIDNIGHT_INDEXER || `https://indexer.${network}.midnight.network/api/v3/graphql`,
-  indexerWS: process.env.DEPLOYSEAL_MIDNIGHT_INDEXER_WS || `wss://indexer.${network}.midnight.network/api/v3/graphql/ws`,
+  indexer: process.env.DEPLOYSEAL_MIDNIGHT_INDEXER || `https://indexer.${network}.midnight.network/api/v4/graphql`,
+  indexerWS: process.env.DEPLOYSEAL_MIDNIGHT_INDEXER_WS || `wss://indexer.${network}.midnight.network/api/v4/graphql/ws`,
   node: process.env.DEPLOYSEAL_MIDNIGHT_NODE || `https://rpc.${network}.midnight.network`,
   proof: process.env.DEPLOYSEAL_MIDNIGHT_PROOF || `https://lace-proof-pub.${network}.midnight.network`,
 }
@@ -44,8 +48,46 @@ function required(name) {
 
 function privateStatePassword() {
   const password = required('DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD')
-  if (password.length < 16) throw new Error('DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD must be at least 16 characters')
+  try {
+    validatePassword(password)
+  } catch (cause) {
+    throw new Error(`DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD is invalid: ${cause.message}`, { cause })
+  }
   return password
+}
+
+async function readDustState() {
+  if (!existsSync(dustStatePath)) return undefined
+  let record
+  try {
+    record = JSON.parse(readFileSync(dustStatePath, 'utf8'))
+  } catch (cause) {
+    throw new Error(`unable to read DUST wallet state at ${dustStatePath}`, { cause })
+  }
+  if (record?.version !== 1 || typeof record.salt !== 'string' || typeof record.data !== 'string') {
+    throw new Error(`invalid DUST wallet state at ${dustStatePath}`)
+  }
+  const encryption = await StorageEncryption.create(privateStatePassword(), {
+    existingSalt: Buffer.from(record.salt, 'base64'),
+  })
+  try {
+    return await encryption.decrypt(record.data)
+  } catch (cause) {
+    throw new Error(`unable to decrypt DUST wallet state at ${dustStatePath}`, { cause })
+  }
+}
+
+async function writeDustState(serialized) {
+  const encryption = await StorageEncryption.create(privateStatePassword())
+  const record = JSON.stringify({
+    version: 1,
+    salt: encryption.getSalt().toString('base64'),
+    data: await encryption.encrypt(serialized),
+  })
+  mkdirSync(dirname(dustStatePath), { recursive: true })
+  const temporaryPath = `${dustStatePath}.tmp-${process.pid}`
+  writeFileSync(temporaryPath, `${record}\n`, { mode: 0o600 })
+  renameSync(temporaryPath, dustStatePath)
 }
 
 function privateState() {
@@ -189,20 +231,41 @@ async function walletContext({ seedHex = required('DEPLOYSEAL_MIDNIGHT_SEED_HEX'
   const unshieldedKeystore = createKeystore(keys[Roles.NightExternal], getNetworkId())
   const configuration = {
     networkId: getNetworkId(),
-    indexerClientConnection: { indexerHttpUrl: endpoints.indexer, indexerWsUrl: endpoints.indexerWS },
+    indexerClientConnection: {
+      indexerHttpUrl: endpoints.indexer,
+      indexerWsUrl: endpoints.indexerWS,
+      bufferSize: 2_000,
+      resumeThreshold: 100,
+    },
+    batchUpdates: { size: 1_000, timeout: 1, spacing: 0 },
     provingServerUrl: new URL(endpoints.proof),
     relayURL: new URL(endpoints.node.replace(/^http/, 'ws')),
     txHistoryStorage: new InMemoryTransactionHistoryStorage(),
     costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
   }
+  const serializedDustState = syncDust ? await readDustState() : undefined
   const wallet = await WalletFacade.init({
     configuration,
     submissionService: (config) => persistentSubmissionService(config),
     shielded: (config) => ShieldedWallet(config).startWithSecretKeys(shieldedSecretKeys),
     unshielded: (config) => UnshieldedWallet(config).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore)),
-    dust: (config) => DustWallet(config).startWithSecretKey(dustSecretKey, ledger.LedgerParameters.initialParameters().dust),
+    dust: (config) => serializedDustState
+      ? DustWallet(config).restore(serializedDustState)
+      : DustWallet(config).startWithSecretKey(dustSecretKey, ledger.LedgerParameters.initialParameters().dust),
   })
-  const context = { wallet, shieldedSecretKeys, dustSecretKey, unshieldedKeystore }
+  const context = {
+    wallet,
+    shieldedSecretKeys,
+    dustSecretKey,
+    unshieldedKeystore,
+    async stop() {
+      try {
+        if (syncDust) await writeDustState(await wallet.dust.serializeState())
+      } finally {
+        await wallet.stop()
+      }
+    },
+  }
   await context.wallet.unshielded.start()
   if (syncDust) await context.wallet.dust.start(dustSecretKey)
   await context.wallet.pendingTransactionsService.start()
@@ -336,7 +399,7 @@ export async function createMidnightClient({
     }
   }
 
-  return { reserve, finalize, close: () => context.wallet.stop() }
+  return { reserve, finalize, close: () => context.stop() }
 }
 
 async function main() {
@@ -396,7 +459,7 @@ async function main() {
     }
     throw new Error(`unknown command: ${command}`)
   } finally {
-    await context.wallet.stop()
+    await context.stop()
   }
 }
 

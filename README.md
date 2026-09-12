@@ -46,9 +46,14 @@ The minimal Compact vertical slice lives in
 tool, select the pinned toolchain, then compile it:
 
 ```sh
-compact update 0.30.0
+compact update 0.31.1
 npm --prefix contracts/deployseal run compact
 ```
+
+The Preprod client uses ledger-v8 8.1.2, MidnightJS 4.1.1, and Wallet SDK
+DUST 4.2.0. Its first full DUST sync can take a few minutes; the encrypted
+wallet snapshot under `.deployseal-midnight-level-db/` makes later runs resume
+from the latest indexed event.
 
 The contract binds a policy root, checks a private policy-root witness, inserts
 a one-use operation nullifier, and records one terminal receipt hash. The
@@ -65,14 +70,14 @@ private policy inputs; keep all values in the environment or a secret manager:
 ```sh
 export DEPLOYSEAL_MIDNIGHT_SEED_HEX='...'
 # Needed by deploy/reserve/finalize; the bounded dust command does not need it.
-export DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD='use-a-secret-at-least-16-characters'
+export DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD='Use-a-strong-Secret-9!'
 export DEPLOYSEAL_MIDNIGHT_DB_PATH="$PWD/.deployseal-midnight-level-db"
 export DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX='64 lowercase hex characters'
 export DEPLOYSEAL_PRIVATE_POLICY_JSON='{"maxCriticalCves":0,"maxHighCves":2,"minEvalScore":90,"minimumApprovals":2}'
 export DEPLOYSEAL_EVIDENCE_JSON='{"criticalCves":0,"highCves":1,"evalScore":97,"approvalRoles":["security","governance"]}'
 
 # Run a local proof server before the wallet can submit the DUST-registration transaction.
-# docker run --rm -p 6300:6300 midnightntwrk/proof-server:8.0.3 midnight-proof-server -v
+# docker run --rm -p 6300:6300 midnightntwrk/proof-server:8.1.0 midnight-proof-server -v
 export DEPLOYSEAL_MIDNIGHT_PROOF='http://127.0.0.1:6300'
 npm --prefix contracts/deployseal run preprod -- dust
 # returns a finalized registrationTxId; DUST accrues for the designated address after confirmation

@@ -16,7 +16,7 @@ The repository was inspected on 12 September 2026. The evidence is intentionally
 | Root | `README.md` documents the local demo; `context.md` and `plan.md` remain the design/evidence artifacts | Keep the local path reproducible while real deployment inputs are supplied |
 | Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | It selects local or AWS mode from the broker and resumes the same operation after reload |
 | Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, GitHub/AWS/Midnight adapters, receipt verifier, and tests | JSON is the reproducible demo store; production still needs a transactional multi-worker store and Nitro deployment |
-| Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.22 reserve/finalize contract compiled by toolchain 0.30.0 for the stable ledger-v8 Preprod stack | The generated bindings drive both the simulator and the credential-gated Preprod client |
+| Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.23 reserve/finalize contract compiled by toolchain 0.31.1 for the stable ledger-v8 Preprod stack | The generated bindings drive both the simulator and the credential-gated Preprod client |
 | Secrets | `client/.env` and `contracts/.env` are empty, ignored placeholders | No credential is currently available or required for local synthetic tests |
 | Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
 
