@@ -92,6 +92,7 @@ PORT=8787
 CLIENT_ORIGIN=*
 EOF
 chmod 0640 /etc/deployseal/server.env
+chown root:deployseal /etc/deployseal/server.env
 
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 get_secret() {
@@ -173,6 +174,7 @@ Before=deployseal.service
 
 [Service]
 Type=oneshot
+User=deployseal
 ExecStart=/usr/local/bin/deployseal-attest
 RemainAfterExit=yes
 
@@ -254,6 +256,7 @@ WantedBy=multi-user.target
 EOF
 
 chown -R deployseal:deployseal /opt/deployseal /var/lib/deployseal
+rm -f /etc/sudoers.d/deployseal-attestation
 systemctl daemon-reload
 systemctl enable --now deployseal-proof.service
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer

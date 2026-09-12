@@ -38,6 +38,7 @@ set_env DEPLOYSEAL_AZURE_ATTESTATION_HELPER /usr/local/bin/deployseal-attest
 set_env DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO false
 set_env DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS 300
 chmod 0640 "$env_file"
+chown root:deployseal "$env_file"
 
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 for name in contract-address build-fact-json build-adapter-public-key; do
@@ -89,6 +90,7 @@ Before=deployseal.service
 
 [Service]
 Type=oneshot
+User=deployseal
 ExecStart=/usr/local/bin/deployseal-attest
 RemainAfterExit=yes
 
@@ -154,10 +156,12 @@ elif ! grep -q '^ExecStartPre=/usr/local/bin/deployseal-attest$' /etc/systemd/sy
 fi
 
 chown -R deployseal:deployseal "$repo" /var/lib/deployseal
+rm -f /etc/sudoers.d/deployseal-attestation
 systemctl daemon-reload
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer
 systemctl start deployseal-build-fact-refresh.timer
 systemctl restart deployseal-attestation.service
+chown -R deployseal:deployseal /var/lib/deployseal/attestation
 if [ ! -s /etc/deployseal/allowed-measurements ]; then
   node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const token=readFileSync('/var/lib/deployseal/attestation/token.jwt','utf8').trim(); const payload=JSON.parse(Buffer.from(token.split('.')[1], 'base64url')); const measurement=payload['x-ms-sevsnpvm-launchmeasurement']; if (!measurement) throw new Error('attestation measurement missing'); writeFileSync('/etc/deployseal/allowed-measurements', measurement.toLowerCase()+'\\n', { mode: 0o640 });"
 fi
