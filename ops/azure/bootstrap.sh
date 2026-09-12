@@ -10,7 +10,7 @@ curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
 
-install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/secrets /var/lib/deployseal/midnight-v2
+install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/secrets /var/lib/deployseal/midnight
 if [ ! -d /opt/deployseal/.git ]; then
   git clone --depth 1 https://github.com/Shaurya2k06/DeploySeal.git /opt/deployseal
 else
@@ -82,7 +82,7 @@ DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION=true
 DEPLOYSEAL_AZURE_SECRET_DIR=/etc/deployseal/secrets
 DEPLOYSEAL_MIDNIGHT_PROOF=http://127.0.0.1:6300
 DEPLOYSEAL_MIDNIGHT_STATE_ID=deployseal-private-state-v2
-DEPLOYSEAL_MIDNIGHT_DB_PATH=/var/lib/deployseal/midnight-v2
+DEPLOYSEAL_MIDNIGHT_DB_PATH=/var/lib/deployseal/midnight
 DEPLOYSEAL_STATE_PATH=/var/lib/deployseal/state.sqlite
 DEPLOYSEAL_ALLOW_NEW_OPERATION=true
 DEPLOYSEAL_CRASH_MODE=kill

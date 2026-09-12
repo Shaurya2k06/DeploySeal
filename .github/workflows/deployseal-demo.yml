@@ -117,7 +117,7 @@ jobs:
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_VM" \
             --command-id RunShellScript \
-            --scripts 'set -Eeuo pipefail
+            --scripts 'set -eu
               git -c safe.directory=/opt/deployseal -C /opt/deployseal pull --ff-only
               npm --prefix /opt/deployseal/contracts/deployseal ci
               npm --prefix /opt/deployseal/server ci
