@@ -309,6 +309,7 @@ export class DeploySealBroker {
 
     return {
       mode: this.providerAdapter?.mode || this.providerAdapter?.id || 'local-emulator',
+      contractAddress: process.env.DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS || null,
       warning: this.providerAdapter
         ? `${this.providerAdapter.id} path: Compact proof verification, TEE isolation, and receipt-key policy are configured separately.`
         : 'Local demo only: Compact runs a local simulator; cloud provider, TEE, and receipt signing are emulated.',
@@ -320,6 +321,7 @@ export class DeploySealBroker {
             gates: operation.gates,
             timeline: operation.timeline,
             proof: operation.proof,
+            finalizationTxId: operation.compactFinalization?.txId || null,
             provider: operation.provider
               ? {
                   operationId: operation.provider.providerOperationId,
