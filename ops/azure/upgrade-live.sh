@@ -45,7 +45,7 @@ chown root:deployseal "$env_file"
 
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 for name in contract-address server-policy-json server-evidence-json build-fact-json build-adapter-public-key; do
-  temporary="$secret_dir/$name.tmp"
+  temporary="$secret_dir/$name.tmp.$$"
   az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query value --output tsv --only-show-errors >"$temporary"
   mv -f "$temporary" "$secret_dir/$name"
 done
@@ -109,7 +109,7 @@ umask 077
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 changed=0
 for name in server-policy-json server-evidence-json build-fact-json build-adapter-public-key; do
-  temporary="/etc/deployseal/secrets/$name.tmp"
+  temporary="/etc/deployseal/secrets/$name.tmp.$$"
   if ! az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query value --output tsv --only-show-errors >"$temporary" 2>/dev/null; then
     rm -f "$temporary"
     exit 0
