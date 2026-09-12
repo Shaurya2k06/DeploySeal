@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { KMSClient, VerifyCommand } from '@aws-sdk/client-kms'
+import { AzureKeyVaultReceiptSigner } from './azure.js'
 import { receiptBundleFromState, verifyReceiptBundle } from './receipt.js'
 
 const inputPath = process.argv[2]
@@ -11,8 +12,13 @@ if (!inputPath) {
     const input = JSON.parse(readFileSync(inputPath, 'utf8'))
     const bundle = input.operations ? receiptBundleFromState(input) : input
     if (!bundle) throw new Error('no receipt found')
-    const kmsVerify = bundle.publicKey
+    const externalVerify = bundle.publicKey
       ? null
+      : process.env.DEPLOYSEAL_PROVIDER === 'azure-arm'
+        ? async (message, signature) => {
+            const signer = new AzureKeyVaultReceiptSigner()
+            return signer.verify(message, signature)
+          }
       : async (message, signature) => {
           if (!process.env.AWS_REGION) throw new Error('AWS_REGION is required for KMS verification')
           const client = new KMSClient({ region: process.env.AWS_REGION })
@@ -27,7 +33,7 @@ if (!inputPath) {
           )
           return result.SignatureValid === true
         }
-    const result = await verifyReceiptBundle(bundle, { kmsVerify })
+    const result = await verifyReceiptBundle(bundle, { kmsVerify: externalVerify })
     console.log(JSON.stringify(result, null, 2))
     if (!result.valid) process.exitCode = 1
   } catch (error) {

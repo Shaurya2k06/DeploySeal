@@ -7,8 +7,8 @@ response, recover with the same idempotency token, verify the receipt, and
 reject replay.
 
 The local broker is deliberately labeled an emulator. It does not claim a
-Midnight network transaction, AWS execution, Nitro attestation, or production
-KMS isolation.
+Midnight network transaction, Azure execution, SEV-SNP attestation, or
+production Key Vault isolation.
 
 ## Run the demo
 
@@ -98,10 +98,30 @@ entire public DUST event history, which can exceed a local Node heap on a fresh
 wallet; DUST generation continues on-chain after the registration is finalized.
 
 To run the HTTP broker against those same Midnight private-state files, set
-`DEPLOYSEAL_PROVIDER=aws-cloudformation`, the AWS variables below, and both
+`DEPLOYSEAL_PROVIDER=azure-arm`, the Azure variables below, and both
 `DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS` and `DEPLOYSEAL_MIDNIGHT_SEED_HEX`.
 The broker then uses the real reserve/finalize client; if those credentials are
-missing it refuses the real AWS path instead of falling back to the simulator.
+missing it refuses the real Azure path instead of falling back to the simulator.
+
+## Real Azure mode
+
+Set `DEPLOYSEAL_PROVIDER=azure-arm` to select the Azure Resource Manager
+adapter. It requires `AZURE_SUBSCRIPTION_ID`,
+`DEPLOYSEAL_AZURE_RESOURCE_GROUP`, `DEPLOYSEAL_AZURE_LOCATION`,
+`DEPLOYSEAL_AZURE_TARGET`, `AZURE_KEY_VAULT_URL`,
+`DEPLOYSEAL_AZURE_KEY_NAME`, and a signed Azure Attestation JWT in
+`DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE`. The managed identity running the
+broker needs deployment permission only in the configured target resource
+group and Key Vault sign/verify permission for the receipt key.
+
+The Azure adapter uses the operation ID as the ARM deployment name, records a
+harmless deployment template with the artifact digest as a parameter, queries
+that same deployment after a lost response, and signs the receipt digest with
+Key Vault. The recommended runtime is an AMD SEV-SNP `Standard_DC2as_v5`
+Confidential VM. Generate the attestation JWT inside that VM with Microsoft's
+`azure-guest-attest` tool; the server verifies the MAA signature, requires an
+Azure-compliant non-debuggable SEV-SNP claim, and binds the launch measurement
+to the receipt.
 
 ## Trust boundary
 
@@ -110,8 +130,8 @@ The local broker evaluates synthetic evidence, runs the checked-in Compact
 reservation circuit in its simulator, persists the provider token before
 execution, signs a canonical receipt with an ephemeral Ed25519 key,
 and exposes only explicitly selected audit fields. The emulator is intentionally
-not a production security boundary; production needs the Midnight proof,
-CloudFormation idempotency/query path, Nitro measurement policy, and KMS key
+not a production security boundary; production needs the Midnight proof, Azure
+ARM idempotency/query path, SEV-SNP measurement policy, and Key Vault key
 policy described in `context.md` and `plan.md`.
 
 The useful demo sequence is: **Run crash-safe demo → Recover operation →
@@ -119,7 +139,7 @@ Receipt → Verify signature → Audit → Create scoped bundle**. The adversari
 buttons show policy rejection before provider invocation and replay rejection
 after finalization.
 
-## Real AWS mode
+## Alternate AWS mode
 
 Set `DEPLOYSEAL_PROVIDER=aws-cloudformation` to select the CloudFormation
 adapter. It requires `AWS_REGION`, `DEPLOYSEAL_CF_STACK`,

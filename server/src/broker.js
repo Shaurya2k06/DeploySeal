@@ -167,10 +167,10 @@ export class DeploySealBroker {
     const providerEffectCount = Object.keys(this.state.provider.executions).length
 
     return {
-      mode: this.providerAdapter ? 'aws-cloudformation' : 'local-emulator',
+      mode: this.providerAdapter?.mode || this.providerAdapter?.id || 'local-emulator',
       warning: this.providerAdapter
-        ? 'AWS path: Compact proof verification, Nitro isolation, and receipt-key policy must be configured separately.'
-        : 'Local demo only: Compact runs a local simulator; AWS CloudFormation, Nitro, and KMS are emulated.',
+        ? `${this.providerAdapter.id} path: Compact proof verification, TEE isolation, and receipt-key policy are configured separately.`
+        : 'Local demo only: Compact runs a local simulator; cloud provider, TEE, and receipt signing are emulated.',
       policy: this.state.policy,
       operation: operation
         ? {
@@ -433,7 +433,7 @@ export class DeploySealBroker {
         status: execution.status,
         providerCompletionTime: execution.completedAt,
         receiptKeyId: this.receiptSigner?.id || this.state.receiptKey.id,
-        cloudTrailEventHash: execution.cloudTrailEventHash || sha256Hex(JSON.stringify(execution)),
+        providerEvidenceHash: execution.providerEvidenceHash || execution.cloudTrailEventHash || sha256Hex(JSON.stringify(execution)),
         enclaveMeasurement:
           execution.enclaveMeasurement || (this.providerAdapter ? process.env.DEPLOYSEAL_ENCLAVE_MEASUREMENT || 'unconfigured' : 'local-emulator'),
       }
@@ -447,7 +447,7 @@ export class DeploySealBroker {
       operation.receiptSignature = signature
       operation.status = 'RECEIPT_SIGNED'
       addTimeline(operation, 'provider-result', succeeded ? 'Provider reports one accepted effect' : 'Provider rejected the operation')
-      addTimeline(operation, 'receipt-signed', this.receiptSigner ? 'Receipt signed by AWS KMS' : 'Receipt signed by local KMS emulator')
+      addTimeline(operation, 'receipt-signed', this.receiptSigner ? `Receipt signed by ${this.providerAdapter?.id === 'azure-arm' ? 'Azure Key Vault' : 'AWS KMS'}` : 'Receipt signed by local key emulator')
       this.save()
     }
 

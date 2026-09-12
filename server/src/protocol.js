@@ -201,7 +201,7 @@ export function receiptMap(receipt) {
     [9, receipt.status],
     [10, receipt.providerCompletionTime],
     [11, receipt.receiptKeyId],
-    [12, bytes32(receipt.cloudTrailEventHash)],
+    [12, bytes32(receipt.providerEvidenceHash || receipt.cloudTrailEventHash)],
     [13, receipt.enclaveMeasurement],
   ])
 }

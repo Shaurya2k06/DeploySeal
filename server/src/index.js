@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { createPublicKey } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { AwsCloudFormationProvider, AwsKmsReceiptSigner } from './aws.js'
+import { AzureArmProvider, AzureKeyVaultReceiptSigner, AzureTeeAttestation } from './azure.js'
 import { DeploySealBroker } from './broker.js'
 import { finalizeLocalCompactReceipt, verifyLocalCompactProof } from './compact.js'
 import { validateBuildFact, verifyBuildFact } from './github.js'
@@ -10,7 +11,9 @@ import { DEMO_EVIDENCE, PRIVATE_POLICY } from './protocol.js'
 const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
 const useAws = process.env.DEPLOYSEAL_PROVIDER === 'aws-cloudformation'
-const useMidnight = useAws && Boolean(process.env.DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS && process.env.DEPLOYSEAL_MIDNIGHT_SEED_HEX)
+const useAzure = process.env.DEPLOYSEAL_PROVIDER === 'azure-arm'
+const useExternalProvider = useAws || useAzure
+const useMidnight = useExternalProvider && Boolean(process.env.DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS && process.env.DEPLOYSEAL_MIDNIGHT_SEED_HEX)
 let midnightClientPromise
 
 async function midnightClient() {
@@ -60,12 +63,22 @@ function configuredBuildFact() {
   return fact
 }
 
-const provider = useAws ? new AwsCloudFormationProvider() : null
-const receiptSigner = useAws ? new AwsKmsReceiptSigner() : null
-const policy = configuredJson('DEPLOYSEAL_POLICY_JSON', PRIVATE_POLICY)
+const provider = useAws ? new AwsCloudFormationProvider() : useAzure ? new AzureArmProvider() : null
+const receiptSigner = useAws ? new AwsKmsReceiptSigner() : useAzure ? new AzureKeyVaultReceiptSigner() : null
+const azureAttestation = useAzure ? await AzureTeeAttestation.fromEnv() : null
+if (azureAttestation) process.env.DEPLOYSEAL_ENCLAVE_MEASUREMENT = azureAttestation.measurement
+const azureTarget = process.env.DEPLOYSEAL_AZURE_TARGET || 'deployseal-azure-demo'
+const azureLocation = process.env.DEPLOYSEAL_AZURE_LOCATION || 'eastus'
+const policy = configuredJson(
+  'DEPLOYSEAL_POLICY_JSON',
+  useAzure ? { ...PRIVATE_POLICY, allowedProviderId: 'azure-arm', allowedTargetId: azureTarget, allowedRegion: azureLocation } : PRIVATE_POLICY,
+)
 const buildFact = configuredBuildFact()
 const evidence = {
-  ...configuredJson('DEPLOYSEAL_EVIDENCE_JSON', DEMO_EVIDENCE),
+  ...configuredJson(
+    'DEPLOYSEAL_EVIDENCE_JSON',
+    useAzure ? { ...DEMO_EVIDENCE, providerId: 'azure-arm', targetId: azureTarget, region: azureLocation } : DEMO_EVIDENCE,
+  ),
   ...(buildFact
     ? {
         repositoryId: buildFact.immutableRepositoryId,

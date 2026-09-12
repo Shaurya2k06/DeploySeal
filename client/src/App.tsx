@@ -213,7 +213,7 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="environment"><i /> {snapshot?.mode === 'aws-cloudformation' ? 'AWS CLOUDFORMATION' : 'LOCAL COMPACT SIMULATOR'}</div>
+        <div className="environment"><i /> {snapshot?.mode === 'azure-arm' ? 'AZURE ARM · SEV-SNP' : snapshot?.mode === 'aws-cloudformation' ? 'AWS CLOUDFORMATION' : 'LOCAL COMPACT SIMULATOR'}</div>
       </header>
 
       <main id="top">

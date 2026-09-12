@@ -16,6 +16,7 @@
     "@aws-sdk/client-cloudformation": "3.1131.0",
     "@aws-sdk/client-cloudtrail": "3.1131.0",
     "@aws-sdk/client-kms": "3.1131.0",
+    "@azure/identity": "4.13.2",
     "@deployseal/deployseal-contract": "file:../contracts/deployseal",
     "cbor2": "^2.3.0"
   }

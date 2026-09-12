@@ -1,11 +1,13 @@
 # DeploySeal — build context
 
 **Working title:** DeploySeal  
-**Flagship pitch:** *Deploy regulated AI without exposing what you ship: Midnight proves every private policy gate and makes the real AWS deployment exactly once—even through a lost response.*  
+**Flagship pitch:** *Deploy regulated AI without exposing what you ship: Midnight proves every private policy gate and makes the real Azure deployment exactly once—even through a lost response.*
 **Target:** AKINDO Midnight Buildathon, Wave 1  
 **Research cutoff:** 12 September 2026 (UTC)
 
-**Document status:** design context plus a checked-in release-control implementation. The repository contains the release console, durable broker/provider emulator, protocol vectors/tests, a compiling Compact reserve/finalize contract, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, an AWS CloudFormation/KMS adapter, and an independent receipt verifier; the funded Midnight network, AWS account, Nitro, and KMS execution path remains credential-gated.
+**Document status:** design context plus a checked-in release-control implementation. The repository contains the release console, durable broker/provider emulator, protocol vectors/tests, a compiling Compact reserve/finalize contract, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, Azure ARM/Key Vault and AWS adapters, and an independent receipt verifier; the funded Midnight network and Azure confidential execution path remain credential-gated.
+
+The active cloud variant is Azure: an AMD SEV-SNP Confidential VM, Azure Attestation, Azure Resource Manager, and Key Vault. The original AWS acceptance language below remains as the alternate adapter contract; the same idempotency, recovery, receipt-binding, and attestation requirements apply to Azure.
 
 ## 0. Current checkout and prerequisites
 
@@ -14,13 +16,13 @@ The repository was inspected on 12 September 2026. The evidence is intentionally
 | Area | Current evidence | Consequence |
 |---|---|---|
 | Root | `README.md` documents the local demo; `context.md` and `plan.md` remain the design/evidence artifacts | Keep the local path reproducible while real deployment inputs are supplied |
-| Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | It selects local or AWS mode from the broker and resumes the same operation after reload |
-| Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, GitHub/AWS/Midnight adapters, receipt verifier, and tests | JSON is the reproducible demo store; production still needs a transactional multi-worker store and Nitro deployment |
+| Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | It selects local, AWS, or Azure mode from the broker and resumes the same operation after reload |
+| Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, GitHub/AWS/Azure/Midnight adapters, receipt verifier, and tests | JSON is the reproducible demo store; production still needs a transactional multi-worker store and confidential-VM deployment |
 | Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.23 reserve/finalize contract compiled by toolchain 0.31.1 for the stable ledger-v8 Preprod stack | The generated bindings drive both the simulator and the credential-gated Preprod client |
 | Secrets | `client/.env` and `contracts/.env` are empty, ignored placeholders | No credential is currently available or required for local synthetic tests |
 | Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
 
-The real path additionally needs a Compact compiler/local-dev or Testkit setup, a funded Midnight wallet and Preprod endpoints, GitHub workflow permissions with OIDC and artifact-attestation support, and an isolated AWS account with scoped CloudFormation, CloudTrail, KMS, and Nitro access. Those credentials, private policy/evidence, cloud account, network funds, and repository-admin permissions must come from the project owner; until then, use synthetic fixtures and the local broker/provider emulator.
+The real path additionally needs a Compact compiler/local-dev or Testkit setup, a funded Midnight wallet and Preprod endpoints, GitHub workflow permissions with OIDC and artifact-attestation support, and an Azure subscription with scoped ARM, Attestation, Key Vault, and confidential-VM access. Those credentials, private policy/evidence, cloud account, network funds, and repository-admin permissions must come from the project owner; until then, use synthetic fixtures and the local broker/provider emulator.
 
 ## 1. Executive decision
 
