@@ -5,6 +5,7 @@ import { AwsCloudFormationProvider, AwsKmsReceiptSigner } from './aws.js'
 import { AzureArmProvider, AzureKeyVaultReceiptSigner, AzureTeeAttestation } from './azure.js'
 import { DeploySealBroker } from './broker.js'
 import { finalizeLocalCompactReceipt, verifyLocalCompactProof } from './compact.js'
+import { configuredEvidenceFacts, evidenceFromFacts, verifyEvidenceBundle } from './evidence.js'
 import { validateBuildFact, verifyBuildFact } from './github.js'
 import { DEMO_EVIDENCE, PRIVATE_POLICY } from './protocol.js'
 
@@ -74,7 +75,10 @@ const policy = configuredJson(
   useAzure ? { ...PRIVATE_POLICY, allowedProviderId: 'azure-arm', allowedTargetId: azureTarget, allowedRegion: azureLocation } : PRIVATE_POLICY,
 )
 const buildFact = configuredBuildFact()
-const evidence = {
+if (useAzure && process.env.DEPLOYSEAL_REQUIRE_BUILD_FACT !== 'false' && !buildFact) {
+  throw Object.assign(new Error('a signed BuildFact is required for Azure provider mode'), { code: 'INVALID_CONFIG' })
+}
+const baseEvidence = {
   ...configuredJson(
     'DEPLOYSEAL_EVIDENCE_JSON',
     useAzure ? { ...DEMO_EVIDENCE, providerId: 'azure-arm', targetId: azureTarget, region: azureLocation } : DEMO_EVIDENCE,
@@ -82,11 +86,32 @@ const evidence = {
   ...(buildFact
     ? {
         repositoryId: buildFact.immutableRepositoryId,
+        runId: buildFact.runId,
+        runAttempt: buildFact.runAttempt,
         commitSha: buildFact.commitSha,
         artifactDigest: buildFact.artifactDigest,
       }
     : {}),
 }
+const configuredFacts = configuredEvidenceFacts()
+if (useAzure && process.env.DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS === 'true' && !configuredFacts) {
+  throw Object.assign(new Error('signed EvidenceFacts are required for Azure provider mode'), { code: 'INVALID_CONFIG' })
+}
+const evidence = configuredFacts
+  ? {
+      ...baseEvidence,
+      ...evidenceFromFacts(
+        verifyEvidenceBundle(configuredFacts.bundle, configuredFacts.publicKeys, {
+          artifactDigest: baseEvidence.artifactDigest,
+          commitSha: baseEvidence.commitSha,
+          providerId: baseEvidence.providerId,
+          targetId: baseEvidence.targetId,
+          region: baseEvidence.region,
+          policyEpoch: policy.epoch,
+        }),
+      ),
+    }
+  : baseEvidence
 const proofVerifier = useMidnight
   ? async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
   : useAws
@@ -97,7 +122,12 @@ const finalizeVerifier = useMidnight
   : useAws
     ? null
     : finalizeLocalCompactReceipt
-const broker = new DeploySealBroker({ provider, receiptSigner, proofVerifier, finalizeVerifier, policy, evidence })
+const attestationCheck = azureAttestation
+  ? ({ operationDigest }) => process.env.DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION === 'true'
+    ? azureAttestation.attestChallenge(operationDigest.toString('hex'))
+    : azureAttestation.refresh()
+  : null
+const broker = new DeploySealBroker({ provider, receiptSigner, proofVerifier, finalizeVerifier, policy, evidence, buildFact, attestationCheck })
 
 function headers() {
   return {
@@ -176,8 +206,14 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && url.pathname === '/api/audit/disclose') {
       const body = await readJson(request)
       const fields = Array.isArray(body?.fields) ? body.fields.slice(0, 8) : []
-      const result = await broker.disclose(fields)
+      const result = await broker.disclose(fields, { purpose: body?.purpose, recipientId: body?.recipientId })
       send(response, result.accepted ? 200 : 409, result)
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/audit/verify') {
+      const result = await broker.verifyDisclosure(await readJson(request))
+      send(response, 200, result)
       return
     }
 

@@ -16,7 +16,9 @@ export type Witnesses<PS> = {
 export type ImpureCircuits<PS> = {
   reserve(context: __compactRuntime.CircuitContext<PS>,
           operationPolicyRoot_0: Uint8Array,
-          operationNullifier_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+          operationNullifier_0: Uint8Array,
+          operationDigest_0: Uint8Array,
+          operationPolicyEpoch_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   finalize(context: __compactRuntime.CircuitContext<PS>,
            operationNullifier_0: Uint8Array,
            receiptHash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
@@ -25,7 +27,9 @@ export type ImpureCircuits<PS> = {
 export type ProvableCircuits<PS> = {
   reserve(context: __compactRuntime.CircuitContext<PS>,
           operationPolicyRoot_0: Uint8Array,
-          operationNullifier_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+          operationNullifier_0: Uint8Array,
+          operationDigest_0: Uint8Array,
+          operationPolicyEpoch_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   finalize(context: __compactRuntime.CircuitContext<PS>,
            operationNullifier_0: Uint8Array,
            receiptHash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
@@ -37,7 +41,9 @@ export type PureCircuits = {
 export type Circuits<PS> = {
   reserve(context: __compactRuntime.CircuitContext<PS>,
           operationPolicyRoot_0: Uint8Array,
-          operationNullifier_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
+          operationNullifier_0: Uint8Array,
+          operationDigest_0: Uint8Array,
+          operationPolicyEpoch_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   finalize(context: __compactRuntime.CircuitContext<PS>,
            operationNullifier_0: Uint8Array,
            receiptHash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
@@ -52,6 +58,13 @@ export type Ledger = {
     member(elem_0: Uint8Array): boolean;
     [Symbol.iterator](): Iterator<Uint8Array>
   };
+  operationDigests: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: Uint8Array): boolean;
+    lookup(key_0: Uint8Array): Uint8Array;
+    [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
+  };
   finalizedNullifiers: {
     isEmpty(): boolean;
     size(): bigint;
@@ -63,6 +76,13 @@ export type Ledger = {
     size(): bigint;
     member(elem_0: Uint8Array): boolean;
     [Symbol.iterator](): Iterator<Uint8Array>
+  };
+  receiptHashesByOperation: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: Uint8Array): boolean;
+    lookup(key_0: Uint8Array): Uint8Array;
+    [Symbol.iterator](): Iterator<[Uint8Array, Uint8Array]>
   };
 }
 

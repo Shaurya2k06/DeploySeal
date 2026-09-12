@@ -1,14 +1,21 @@
 # DeploySeal
 
 DeploySeal is a release-control console for proving a deployment policy before
-an external provider is allowed to act. The checked-in demo runs locally and
-shows the complete recovery path: reserve an operation, lose the provider
+an external provider is allowed to act. The local demo and the live Azure path
+show the same recovery sequence: reserve an operation, lose the provider
 response, recover with the same idempotency token, verify the receipt, and
 reject replay.
 
 The local broker is deliberately labeled an emulator. It does not claim a
 Midnight network transaction, Azure execution, SEV-SNP attestation, or
 production Key Vault isolation.
+
+The current public Azure demo is
+`http://deployseal-cvm-260912.eastus.cloudapp.azure.com/`. It runs on an AMD
+SEV-SNP Confidential VM with Azure Attestation, ARM resource-group tag
+reconciliation, SQLite durable state, and a Key Vault-signed receipt. The
+standard Key Vault software key is not an HSM or Secure Key Release binding;
+the public HTTP demo also has no user authentication.
 
 ## Run the demo
 
@@ -55,11 +62,11 @@ DUST 4.2.0. Its first full DUST sync can take a few minutes; the encrypted
 wallet snapshot under `.deployseal-midnight-level-db/` makes later runs resume
 from the latest indexed event.
 
-The contract binds a policy root, checks a private policy-root witness, inserts
-a one-use operation nullifier, and records one terminal receipt hash. The
-checked-in server uses these circuits through the local Compact simulator. The
-same generated bindings also drive the credential-gated MidnightJS/Preprod
-client.
+The contract binds a policy root, checks a private policy-root witness, binds
+the operation digest and policy epoch, inserts a one-use operation nullifier,
+and records one terminal receipt hash per operation. The checked-in server
+uses these circuits through the local Compact simulator. The same generated
+bindings also drive the MidnightJS/Preprod client.
 
 ## Midnight Preprod path
 
@@ -114,25 +121,27 @@ adapter. It requires `AZURE_SUBSCRIPTION_ID`,
 broker needs deployment permission only in the configured target resource
 group and Key Vault sign/verify permission for the receipt key.
 
-The Azure adapter uses the operation ID as the ARM deployment name, records a
-harmless deployment template with the artifact digest as a parameter, queries
+The Azure adapter uses the operation ID as the ARM deployment name, applies
+operation and artifact tags to the isolated target resource group, queries
 that same deployment after a lost response, and signs the receipt digest with
 Key Vault. The recommended runtime is an AMD SEV-SNP `Standard_DC2as_v5`
 Confidential VM. Generate the attestation JWT inside that VM with Microsoft's
 `azure-guest-attest` tool; the server verifies the MAA signature, requires an
-Azure-compliant non-debuggable SEV-SNP claim, and binds the launch measurement
+Azure-compliant non-debuggable SEV-SNP claim, checks an allowlisted launch
+measurement and fresh challenge-bound runtime data, and binds the measurement
 to the receipt.
 
 ## Trust boundary
 
 The browser never decides policy and receives only the public operation view.
-The local broker evaluates synthetic evidence, runs the checked-in Compact
-reservation circuit in its simulator, persists the provider token before
-execution, signs a canonical receipt with an ephemeral Ed25519 key,
-and exposes only explicitly selected audit fields. The emulator is intentionally
-not a production security boundary; production needs the Midnight proof, Azure
-ARM idempotency/query path, SEV-SNP measurement policy, and Key Vault key
-policy described in `context.md` and `plan.md`.
+The local broker evaluates synthetic evidence and uses the checked-in Compact
+simulator; Azure mode requires a signed GitHub `BuildFactV1`, verifies the
+attestation challenge inside the CVM, reconciles ARM tags, persists through a
+SQLite lease, and signs the canonical receipt with Key Vault. Optional signed
+`EvidenceFactV1` bundles cover SBOM, model-evaluation, residency, and approval
+inputs; set `DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS=true` only when those external
+issuer keys and facts are provisioned. The public demo remains a demo, not a
+fully authenticated production control plane.
 
 The useful demo sequence is: **Run crash-safe demo → Recover operation →
 Receipt → Verify signature → Audit → Create scoped bundle**. The adversarial
@@ -152,7 +161,10 @@ client; the local Compact simulator is never accepted as a production proof
 boundary.
 
 `.github/workflows/deployseal-demo.yml` builds and verifies a GitHub-attested
-artifact, obtains a short-lived OIDC token, and emits a signed `BuildFactV1`.
+artifact, obtains a short-lived OIDC token, emits a signed `BuildFactV1`, and
+publishes the fact and its public adapter key to the Azure Key Vault used by
+the coordinator. The VM refreshes those secrets and restarts the broker when a
+new fact arrives.
 The coordinator-side OIDC/BuildFact verifier is in `server/src/github.js` and
 uses `gh attestation verify` for the Sigstore attestation boundary. Supply the
 fact through `DEPLOYSEAL_BUILD_FACT_FILE` and its separately allowlisted

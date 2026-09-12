@@ -5,7 +5,22 @@
 **Target:** AKINDO Midnight Buildathon, Wave 1  
 **Research cutoff:** 12 September 2026 (UTC)
 
-**Document status:** design context plus a checked-in release-control implementation. The repository contains the release console, durable broker/provider emulator, protocol vectors/tests, a compiling Compact reserve/finalize contract, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, Azure ARM/Key Vault and AWS adapters, and an independent receipt verifier; the funded Midnight network and Azure confidential execution path remain credential-gated.
+**Document status:** design context plus a checked-in release-control implementation. The active cloud path is deployed on Azure; the historical AWS design remains below as an alternate adapter contract.
+
+### Implementation status — 13 September 2026
+
+Completed and verified:
+
+- Azure SEV-SNP Confidential VM, MAA token verification, launch-measurement allowlist, fresh challenge-bound runtime data, ARM deployment/tag effect, Key Vault signing, and public receipt verification are live.
+- The broker has a real pre-provider crash seam, systemd restart/recovery, SQLite WAL state, and an inter-process lease. The next live crash/recovery run is still an operational verification step.
+- Compact generated artifacts now bind the operation digest and policy epoch and record receipt hashes by operation. The upgraded contract must be deployed before the live broker is rolled to those bindings.
+- GitHub Actions now verifies the artifact attestation, signs `BuildFactV1`, publishes it to Key Vault, and has a guarded VM rollout path.
+- Signed `EvidenceFactV1` envelopes are verified off-chain and can be required explicitly; the actual SBOM scanner, model evaluator, residency issuer, and human approval systems remain external inputs.
+
+Known deliberate boundaries:
+
+- The live Key Vault receipt key is standard software-protected RSA, not HSM/Secure Key Release-bound. The public demo is HTTP and unauthenticated.
+- Local mode remains a simulator by design. AWS remains an alternate implementation, not the active demo path.
 
 The active cloud variant is Azure: an AMD SEV-SNP Confidential VM, Azure Attestation, Azure Resource Manager, and Key Vault. The original AWS acceptance language below remains as the alternate adapter contract; the same idempotency, recovery, receipt-binding, and attestation requirements apply to Azure.
 
@@ -17,28 +32,28 @@ The repository was inspected on 12 September 2026. The evidence is intentionally
 |---|---|---|
 | Root | `README.md` documents the local demo; `context.md` and `plan.md` remain the design/evidence artifacts | Keep the local path reproducible while real deployment inputs are supplied |
 | Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | It selects local, AWS, or Azure mode from the broker and resumes the same operation after reload |
-| Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, GitHub/AWS/Azure/Midnight adapters, receipt verifier, and tests | JSON is the reproducible demo store; production still needs a transactional multi-worker store and confidential-VM deployment |
+| Server | `server/` contains the coordinator/broker runtime, JSON/SQLite durable state, protocol library, GitHub/AWS/Azure/Midnight adapters, signed EvidenceFact verifier, receipt verifier, and tests | SQLite is the single-host durable store; a multi-host deployment still needs an external transactional store |
 | Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.23 reserve/finalize contract compiled by toolchain 0.31.1 for the stable ledger-v8 Preprod stack | The generated bindings drive both the simulator and the credential-gated Preprod client |
-| Secrets | `client/.env` and `contracts/.env` are empty, ignored placeholders | No credential is currently available or required for local synthetic tests |
+| Secrets | No credentials are committed; Azure runtime secrets live in Key Vault and are materialized only on the CVM | Local synthetic tests need no credentials; Preprod and live rollout still need the corresponding external accounts |
 | Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
 
-The real path additionally needs a Compact compiler/local-dev or Testkit setup, a funded Midnight wallet and Preprod endpoints, GitHub workflow permissions with OIDC and artifact-attestation support, and an Azure subscription with scoped ARM, Attestation, Key Vault, and confidential-VM access. Those credentials, private policy/evidence, cloud account, network funds, and repository-admin permissions must come from the project owner; until then, use synthetic fixtures and the local broker/provider emulator.
+The active Azure path has those cloud inputs configured. The remaining external inputs are a funded Midnight Preprod wallet/contract deployment and independently issued SBOM, evaluation, residency, and approval facts. Until those are supplied, the local path and the Azure path's signed BuildFact gate remain reproducible, while the optional EvidenceFact gate stays disabled.
 
 ## 1. Executive decision
 
 DeploySeal is the recommended submission.
 
-It is a confidential, multi-party release-control protocol for regulated AI and software. A deployment is authorized only when a Compact proof establishes that a specific GitHub-built artifact satisfies a current private policy: supply-chain provenance, vulnerability limits, model-evaluation thresholds, data-residency rules, and required approvals. None of the underlying SBOM, CVEs, scores, thresholds, approver identities, or policy clauses becomes public. A one-use Midnight reservation is then bound to one AWS CloudFormation operation, and the actual provider outcome is returned as a signed receipt.
+It is a confidential, multi-party release-control protocol for regulated AI and software. A deployment is authorized only when a Compact proof establishes that a specific GitHub-built artifact satisfies a current private policy: supply-chain provenance, vulnerability limits, model-evaluation thresholds, data-residency rules, and required approvals. None of the underlying SBOM, CVEs, scores, thresholds, approver identities, or policy clauses becomes public. A one-use Midnight reservation is then bound to one Azure ARM operation, and the actual provider outcome is returned as a signed receipt.
 
 The winning demonstration is deliberately sharper than the total architecture:
 
 1. A real GitHub Actions run produces one artifact, OIDC identity, and artifact attestation.
-2. Compact proves that the exact artifact and exact AWS target satisfy a committed confidential policy.
+2. Compact proves that the exact artifact and exact Azure target satisfy a committed confidential policy.
 3. The contract reserves one `operation_id` and prevents replay or policy drift.
-4. An attested broker calls one real CloudFormation change set with `ClientRequestToken = operation_id`.
+4. An attested broker calls one real Azure ARM deployment with `operation_id` as the deployment name.
 5. The worker is killed after AWS accepts the operation but before the client receives a response.
 6. A retry recovers by the same operation ID; it does not create another deployment.
-7. The UI shows one AWS effect, one finalized Midnight operation, and one KMS-signed receipt—while the private evidence remains undisclosed.
+7. The UI shows one Azure effect, one finalized Midnight operation, and one Key Vault-signed receipt—while the private evidence remains undisclosed.
 
 This is not a generic “ZK compliance dashboard.” The hard claim is: **one hidden-policy authorization, one external deployment effect, one durable receipt, including across a lost response.**
 

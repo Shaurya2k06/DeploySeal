@@ -1,14 +1,19 @@
 import { createHash, createPublicKey, createVerify } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { promisify } from 'node:util'
 import { DefaultAzureCredential } from '@azure/identity'
 
 const ARM_SCOPE = 'https://management.azure.com/.default'
 const KEY_VAULT_SCOPE = 'https://vault.azure.net/.default'
 const ARM_API_VERSION = '2022-09-01'
 const KEY_VAULT_API_VERSION = '7.4'
+const RESOURCE_TAGS_API_VERSION = '2021-04-01'
 const OPERATION_ID = /^[0-9a-f]{64}$/u
 const DEBUGGABLE_CLAIM = 'x-ms-sevsnpvm-is-debuggable'
 const MEASUREMENT_CLAIM = 'x-ms-sevsnpvm-launchmeasurement'
+const REPORT_DATA_CLAIMS = ['user-data', 'x-ms-runtime-data', 'x-ms-sevsnpvm-reportdata', 'x-ms-sevsnpvm-hostdata']
+const execFileAsync = promisify(execFile)
 
 export const AZURE_ARM_CAPABILITIES = Object.freeze({
   nativeIdempotency: true,
@@ -104,7 +109,19 @@ function deploymentTemplate() {
       DeploySealOperationId: { type: 'string' },
       DeploySealArtifactDigest: { type: 'string' },
     },
-    resources: [],
+    resources: [
+      {
+        type: 'Microsoft.Resources/tags',
+        apiVersion: RESOURCE_TAGS_API_VERSION,
+        name: 'default',
+        properties: {
+          tags: {
+            DeploySealOperationId: "[parameters('DeploySealOperationId')]",
+            DeploySealArtifactDigest: "[parameters('DeploySealArtifactDigest')]",
+          },
+        },
+      },
+    ],
     outputs: {
       DeploySealOperationId: { type: 'string', value: '[parameters(\'DeploySealOperationId\')]' },
       DeploySealArtifactDigest: { type: 'string', value: '[parameters(\'DeploySealArtifactDigest\')]' },
@@ -118,14 +135,20 @@ function parameterValue(deployment, name) {
   return parameters[key]?.value
 }
 
-function deploymentEvidence(deployment) {
+function deploymentEvidence(deployment, targetTags, targetResourceId) {
   return {
     id: deployment?.id || null,
     name: deployment?.name || null,
     provisioningState: deployment?.properties?.provisioningState || null,
     parameters: deployment?.properties?.parameters || null,
     outputs: deployment?.properties?.outputs || null,
+    targetResourceId,
+    targetTags: targetTags?.properties?.tags || null,
   }
+}
+
+function resourceGroupId(subscriptionId, resourceGroup) {
+  return `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}`
 }
 
 export class AzureArmProvider {
@@ -145,6 +168,7 @@ export class AzureArmProvider {
     this.resourceGroup = resourceGroup
     this.location = location
     this.stackName = targetId
+    this.targetResourceId = process.env.DEPLOYSEAL_AZURE_TARGET_RESOURCE_ID || resourceGroupId(subscriptionId, resourceGroup)
     this.client = client
     this.now = now
     this.capabilities = AZURE_ARM_CAPABILITIES
@@ -170,6 +194,19 @@ export class AzureArmProvider {
     }
   }
 
+  tagsUrl() {
+    return `https://management.azure.com${this.targetResourceId}/providers/Microsoft.Resources/tags/default?api-version=${RESOURCE_TAGS_API_VERSION}`
+  }
+
+  async getTags() {
+    try {
+      return await this.client.request(this.tagsUrl(), { scope: ARM_SCOPE })
+    } catch (cause) {
+      if (cause.statusCode === 404) return null
+      throw cause
+    }
+  }
+
   assertBinding(deployment, operationId, operation) {
     if (
       parameterValue(deployment, 'DeploySealOperationId') !== operationId ||
@@ -179,14 +216,19 @@ export class AzureArmProvider {
     }
   }
 
-  execution(deployment, operationId, operation) {
+  execution(deployment, operationId, operation, targetTags = null) {
     this.assertBinding(deployment, operationId, operation)
     const status = provisioningStatus(deployment?.properties?.provisioningState)
-    const evidence = deploymentEvidence(deployment)
+    const tags = targetTags?.properties?.tags || null
+    if (status === 'SUCCEEDED' && (!tags || tags.DeploySealOperationId !== operationId || tags.DeploySealArtifactDigest !== operation.core.artifactDigest)) {
+      throw error('PROVIDER_EFFECT_BINDING_MISMATCH', 'Azure target tags do not match the reserved operation')
+    }
+    const evidence = deploymentEvidence(deployment, targetTags, this.targetResourceId)
     return {
       operationId,
       providerOperationId: deployment?.id || deployment?.name || operationId,
       actualTarget: this.stackName,
+      actualTargetResourceId: this.targetResourceId,
       actualArtifactDigest: parameterValue(deployment, 'DeploySealArtifactDigest'),
       status,
       ...(status === 'PENDING'
@@ -194,13 +236,14 @@ export class AzureArmProvider {
         : { completedAt: asIso(deployment?.properties?.timestamp, this.now) }),
       providerEvidenceHash: sha256Hex(JSON.stringify(evidence)),
       azureDeploymentId: deployment?.id || null,
+      targetTags: tags,
     }
   }
 
   async execute({ operationId, operation }) {
     this.assertOperation(operationId, operation)
     const existing = await this.get(operationId)
-    if (existing) return this.execution(existing, operationId, operation)
+    if (existing) return this.execution(existing, operationId, operation, provisioningStatus(existing.properties?.provisioningState) === 'SUCCEEDED' ? await this.getTags() : null)
 
     let deployment
     try {
@@ -231,13 +274,13 @@ export class AzureArmProvider {
         status: 'PENDING',
       }
     }
-    return this.execution(deployment, operationId, operation)
+    return this.execution(deployment, operationId, operation, provisioningStatus(deployment.properties.provisioningState) === 'SUCCEEDED' ? await this.getTags() : null)
   }
 
   async query({ operationId, operation }) {
     this.assertOperation(operationId, operation)
     const deployment = await this.get(operationId)
-    return deployment ? this.execution(deployment, operationId, operation) : null
+    return deployment ? this.execution(deployment, operationId, operation, provisioningStatus(deployment.properties?.provisioningState) === 'SUCCEEDED' ? await this.getTags() : null) : null
   }
 }
 
@@ -303,10 +346,10 @@ export class AzureKeyVaultReceiptSigner {
 }
 
 function attestationClaim(payload, name) {
-  return payload?.[name] ?? payload?.['x-ms-isolation-tee']?.[name]
+  return payload?.[name] ?? payload?.['x-ms-isolation-tee']?.[name] ?? payload?.['x-ms-runtime']?.[name]
 }
 
-function checkAttestationClaims(payload) {
+function checkAttestationClaims(payload, { allowedMeasurements = null, expectedUserData = null } = {}) {
   if (payload?.['x-ms-attestation-type'] !== 'sevsnpvm') {
     throw error('AZURE_ATTESTATION_TYPE', 'Azure attestation is not an AMD SEV-SNP VM token')
   }
@@ -320,10 +363,19 @@ function checkAttestationClaims(payload) {
   if (typeof measurement !== 'string' || !measurement || /^0+$/u.test(measurement)) {
     throw error('AZURE_ATTESTATION_MEASUREMENT', 'Azure attestation did not include a launch measurement')
   }
+  if (allowedMeasurements && !allowedMeasurements.includes(measurement.toLowerCase())) {
+    throw error('AZURE_ATTESTATION_MEASUREMENT_NOT_ALLOWLISTED', 'Azure attestation launch measurement is not allowlisted')
+  }
+  if (expectedUserData) {
+    const actual = REPORT_DATA_CLAIMS.map((name) => attestationClaim(payload, name)).find((value) => value !== undefined && value !== null)
+    if (typeof actual !== 'string' || actual.toLowerCase().replace(/^hex:/u, '') !== expectedUserData.toLowerCase().replace(/^hex:/u, '')) {
+      throw error('AZURE_ATTESTATION_USER_DATA', 'Azure attestation runtime data does not match the expected challenge')
+    }
+  }
   return measurement
 }
 
-async function verifyMaaToken(token, { endpoint, fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+async function verifyMaaToken(token, { endpoint, fetchImpl = globalThis.fetch, now = Date.now, allowedMeasurements = null, expectedUserData = null, maxAgeSeconds = null } = {}) {
   if (typeof token !== 'string') throw error('INVALID_ATTESTATION_TOKEN', 'Azure attestation token is required')
   const [encodedHeader, encodedPayload, encodedSignature] = token.split('.')
   if (!encodedHeader || !encodedPayload || !encodedSignature) throw error('INVALID_ATTESTATION_TOKEN', 'Azure attestation token is not a JWT')
@@ -351,30 +403,92 @@ async function verifyMaaToken(token, { endpoint, fetchImpl = globalThis.fetch, n
   }
 
   const current = Math.floor(now() / 1000)
-  if (Number.isFinite(payload.exp) && current > payload.exp + 60) throw error('AZURE_ATTESTATION_EXPIRED', 'Azure attestation token is expired')
+  if (!Number.isFinite(payload.iat) || !Number.isFinite(payload.exp) || payload.exp <= payload.iat) {
+    throw error('AZURE_ATTESTATION_TIME_INVALID', 'Azure attestation token has invalid time claims')
+  }
+  if (payload.iat > current + 60 || current > payload.exp + 60) throw error('AZURE_ATTESTATION_EXPIRED', 'Azure attestation token is outside its validity window')
   if (Number.isFinite(payload.nbf) && current + 60 < payload.nbf) throw error('AZURE_ATTESTATION_NOT_YET_VALID', 'Azure attestation token is not active yet')
+  if (maxAgeSeconds !== null && current - payload.iat > maxAgeSeconds + 60) throw error('AZURE_ATTESTATION_STALE', 'Azure attestation token is too old for release authorization')
   if (endpoint && payload.iss && payload.iss !== new URL(endpoint).origin) {
     throw error('AZURE_ATTESTATION_ISSUER', 'Azure attestation token issuer does not match the configured endpoint')
   }
-  const measurement = checkAttestationClaims(payload)
+  const measurement = checkAttestationClaims(payload, { allowedMeasurements, expectedUserData })
   return { measurement, claims: payload }
 }
 
+function configuredAttestationToken() {
+  return process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN ||
+    (process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE
+      ? readFileSync(process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE, 'utf8').trim()
+      : null)
+}
+
+function configuredAttestationList() {
+  const raw = process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS ||
+    (process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE
+      ? readFileSync(process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE, 'utf8')
+      : '')
+  const values = raw.split(/[\s,]+/u).filter(Boolean).map((value) => value.toLowerCase())
+  return values.length ? values : null
+}
+
+function configuredUserData() {
+  const raw = process.env.DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA ||
+    (process.env.DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE
+      ? readFileSync(process.env.DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE, 'utf8').trim()
+      : '')
+  return raw || null
+}
+
 export class AzureTeeAttestation {
-  constructor({ token, measurement, claims }) {
+  constructor({ token, measurement, claims, endpoint, fetchImpl, allowedMeasurements, expectedUserData, maxAgeSeconds }) {
     this.token = token
     this.measurement = measurement
     this.claims = claims
+    this.endpoint = endpoint
+    this.fetchImpl = fetchImpl
+    this.allowedMeasurements = allowedMeasurements
+    this.expectedUserData = expectedUserData
+    this.maxAgeSeconds = maxAgeSeconds
   }
 
-  static async fromEnv({ fetchImpl = globalThis.fetch } = {}) {
-    const token = process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN ||
-      (process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE
-        ? readFileSync(process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE, 'utf8').trim()
-        : null)
+  static async fromEnv({ fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+    const token = configuredAttestationToken()
     if (!token) throw error('AZURE_ATTESTATION_CONFIG', 'DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE is required for Azure provider mode')
     const endpoint = process.env.DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT
-    const result = await verifyMaaToken(token, { endpoint, fetchImpl })
-    return new AzureTeeAttestation({ token, ...result })
+    const allowedMeasurements = configuredAttestationList()
+    if (!allowedMeasurements && process.env.DEPLOYSEAL_ALLOW_UNPINNED_MEASUREMENT !== 'true') {
+      throw error('AZURE_ATTESTATION_MEASUREMENT_POLICY', 'an Azure launch-measurement allowlist is required')
+    }
+    const expectedUserData = configuredUserData()
+    const maxAgeSeconds = Number(process.env.DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS || 300)
+    if (!Number.isSafeInteger(maxAgeSeconds) || maxAgeSeconds < 60) throw error('AZURE_ATTESTATION_CONFIG', 'DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS must be at least 60')
+    const result = await verifyMaaToken(token, { endpoint, fetchImpl, now, allowedMeasurements, expectedUserData, maxAgeSeconds })
+    return new AzureTeeAttestation({ token, endpoint, fetchImpl, allowedMeasurements, expectedUserData, maxAgeSeconds, ...result })
+  }
+
+  async refresh({ expectedUserData = this.expectedUserData, now = Date.now } = {}) {
+    const token = configuredAttestationToken()
+    if (!token) throw error('AZURE_ATTESTATION_CONFIG', 'Azure attestation token is unavailable')
+    const result = await verifyMaaToken(token, {
+      endpoint: this.endpoint,
+      fetchImpl: this.fetchImpl,
+      now,
+      allowedMeasurements: this.allowedMeasurements,
+      expectedUserData,
+      maxAgeSeconds: this.maxAgeSeconds,
+    })
+    Object.assign(this, { token, expectedUserData, ...result })
+    return this
+  }
+
+  async attestChallenge(challenge, { command = process.env.DEPLOYSEAL_AZURE_ATTESTATION_HELPER || null } = {}) {
+    const userData = /^[0-9a-f]{64}$/u.test(challenge || '')
+      ? `${challenge}${sha256Hex(Buffer.from(challenge, 'hex'))}`
+      : challenge
+    if (!command) return this.refresh({ expectedUserData: userData })
+    if (!/^[0-9a-f]{128}$/u.test(userData || '')) throw error('AZURE_ATTESTATION_CHALLENGE', 'operation attestation challenge must be 32-byte hex or an expanded 64-byte lowercase hex value')
+    await execFileAsync(command, [userData], { maxBuffer: 128 * 1024 })
+    return this.refresh({ expectedUserData: userData })
   }
 }

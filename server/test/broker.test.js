@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { DeploySealBroker } from '../src/broker.js'
-import { makeOperationCore, operationDigest, operationId } from '../src/protocol.js'
+import { DEMO_EVIDENCE, PRIVATE_POLICY, makeOperationCore, operationDigest, operationId } from '../src/protocol.js'
 
 function makeBroker() {
   const directory = mkdtempSync(join(tmpdir(), 'deployseal-test-'))
@@ -84,6 +84,41 @@ test('unknown Midnight response resumes the same reserved operation', async () =
   }
 })
 
+test('the real crash seam loses the response before writing a provider checkpoint', async () => {
+  const { directory } = makeBroker()
+  let calls = 0
+  const provider = {
+    id: 'azure-arm',
+    stackName: 'deployseal-demo-stack',
+    capabilities: { nativeIdempotency: true, durableQueryByOperationId: true, receiptCanBindActualTargetAndDigest: true },
+    async execute(input) {
+      calls += 1
+      return { providerOperationId: 'provider-1', actualTarget: input.operation.core.targetId, actualArtifactDigest: input.operation.core.artifactDigest, status: 'SUCCEEDED', completedAt: new Date().toISOString() }
+    },
+    async query(input) {
+      calls += 1
+      return { providerOperationId: 'provider-1', actualTarget: input.operation.core.targetId, actualArtifactDigest: input.operation.core.artifactDigest, status: 'SUCCEEDED', completedAt: new Date().toISOString() }
+    },
+  }
+  const broker = new DeploySealBroker({
+    statePath: join(directory, 'state.json'),
+    provider,
+    proofVerifier: async () => ({ status: 'verified', kind: 'midnight-test' }),
+    policy: { ...PRIVATE_POLICY, allowedProviderId: provider.id },
+    evidence: { ...DEMO_EVIDENCE, providerId: provider.id },
+    crashProcess() { throw Object.assign(new Error('process would be killed here'), { code: 'RESPONSE_LOST' }) },
+  })
+  try {
+    const interrupted = await broker.start({ scenario: 'crash' })
+    assert.equal(interrupted.snapshot.operation.status, 'RECOVERY_REQUIRED')
+    assert.equal(Object.keys(broker.state.provider.executions).length, 0)
+    assert.equal((await broker.recover()).snapshot.operation.status, 'FINALIZED')
+    assert.equal(calls, 2)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('receipt signing is durable before Midnight finalization', async () => {
   const { directory } = makeBroker()
   let finalizeCalls = 0
@@ -153,6 +188,50 @@ test('audit disclosure returns only selected fields', async () => {
     assert.deepEqual(Object.keys(result.disclosure.values), ['policyEpoch', 'outcome'])
     assert.equal(result.snapshot.auditCount, 1)
   } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('SQLite state lease serializes separate broker workers and preserves checkpoints', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'deployseal-sqlite-'))
+  const statePath = join(directory, 'state.sqlite')
+  const first = new DeploySealBroker({ statePath })
+  const second = new DeploySealBroker({ statePath })
+  const events = []
+  let entered
+  const enteredPromise = new Promise((resolve) => { entered = resolve })
+  let release
+  const releasePromise = new Promise((resolve) => { release = resolve })
+  try {
+    const firstRun = first.exclusive(async () => {
+      events.push('first-start')
+      entered()
+      await releasePromise
+      first.state.lastAttempt = { type: 'first', status: 'complete', code: 'OK', at: new Date().toISOString() }
+      first.save()
+      events.push('first-end')
+    })
+    await enteredPromise
+    const secondRun = second.exclusive(async () => {
+      events.push('second-start')
+      second.state.lastAttempt = { type: 'second', status: 'complete', code: 'OK', at: new Date().toISOString() }
+      second.save()
+      events.push('second-end')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.deepEqual(events, ['first-start'])
+    release()
+    await Promise.all([firstRun, secondRun])
+    assert.deepEqual(events, ['first-start', 'first-end', 'second-start', 'second-end'])
+    const reopened = new DeploySealBroker({ statePath })
+    try {
+      assert.equal(reopened.state.lastAttempt.type, 'second')
+    } finally {
+      reopened.close()
+    }
+  } finally {
+    first.close()
+    second.close()
     rmSync(directory, { recursive: true, force: true })
   }
 })

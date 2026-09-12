@@ -319,6 +319,10 @@ async function contractState(networkProviders, contractAddress) {
   return DeploySeal.ledger(state.data)
 }
 
+function bytesEqual(left, right) {
+  return Boolean(left) && Buffer.from(left).equals(Buffer.from(right))
+}
+
 export async function createMidnightClient({
   contractAddress = required('DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS'),
   seedHex = required('DEPLOYSEAL_MIDNIGHT_SEED_HEX'),
@@ -338,6 +342,9 @@ export async function createMidnightClient({
       throw new Error('Midnight contract policy root does not match the configured policy')
     }
     if (before.operationNullifiers.member(nullifier)) {
+      if (!bytesEqual(before.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
+        throw new Error('Midnight operation nullifier is bound to a different operation digest')
+      }
       return {
         status: 'verified',
         kind: 'midnight-preprod',
@@ -349,7 +356,7 @@ export async function createMidnightClient({
       }
     }
     try {
-      const tx = await deployed.callTx.reserve(before.policyRoot, nullifier)
+      const tx = await deployed.callTx.reserve(before.policyRoot, nullifier, Buffer.from(operationId(core), 'hex'), BigInt(core.policyEpoch))
       return {
         status: 'verified',
         kind: 'midnight-preprod',
@@ -361,6 +368,9 @@ export async function createMidnightClient({
     } catch (cause) {
       const after = await contractState(networkProviders, contractAddress)
       if (!after.operationNullifiers.member(nullifier)) throw cause
+      if (!bytesEqual(after.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
+        throw new Error('Midnight operation nullifier is bound to a different operation digest')
+      }
       return {
         status: 'verified',
         kind: 'midnight-preprod',
@@ -381,7 +391,7 @@ export async function createMidnightClient({
       throw new Error('Midnight contract policy root does not match the configured policy')
     }
     if (before.finalizedNullifiers.member(nullifier)) {
-      if (!before.receiptHashes.member(Buffer.from(receiptHash, 'hex'))) {
+      if (!bytesEqual(before.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex'))) {
         throw new Error('Midnight operation was finalized with a different receipt hash')
       }
       return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, recovered: true }
@@ -392,7 +402,7 @@ export async function createMidnightClient({
     } catch (cause) {
       const after = await contractState(networkProviders, contractAddress)
       if (!after.finalizedNullifiers.member(nullifier)) throw cause
-      if (!after.receiptHashes.member(Buffer.from(receiptHash, 'hex'))) {
+      if (!bytesEqual(after.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex'))) {
         throw new Error('Midnight operation was finalized with a different receipt hash')
       }
       return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, recovered: true }
@@ -435,11 +445,14 @@ async function main() {
     if (command === 'reserve') {
       const state = await contractState(networkProviders, contractAddress)
       if (state.operationNullifiers.member(nullifier)) {
+        if (!bytesEqual(state.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
+          throw new Error('operation nullifier is bound to a different operation digest')
+        }
         console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, circuit: 'reserve', recovered: true }))
         return
       }
       const root = state.policyRoot
-      const tx = await deployed.callTx.reserve(root, nullifier)
+      const tx = await deployed.callTx.reserve(root, nullifier, Buffer.from(operationId(core), 'hex'), BigInt(core.policyEpoch))
       console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: tx.public.txId, circuit: 'reserve' }))
       return
     }
@@ -449,7 +462,7 @@ async function main() {
       const receiptHash = Buffer.from(receiptHashHex, 'hex')
       const state = await contractState(networkProviders, contractAddress)
       if (state.finalizedNullifiers.member(nullifier)) {
-        if (!state.receiptHashes.member(receiptHash)) throw new Error('operation was finalized with a different receipt hash')
+        if (!bytesEqual(state.receiptHashesByOperation.lookup(nullifier), receiptHash)) throw new Error('operation was finalized with a different receipt hash')
         console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, circuit: 'finalize', recovered: true }))
         return
       }

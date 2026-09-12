@@ -189,7 +189,7 @@ export function evaluatePolicy(core, evidence = DEMO_EVIDENCE, policy = PRIVATE_
 }
 
 export function receiptMap(receipt) {
-  return new Map([
+  const entries = [
     [1, receipt.version],
     [2, bytes32(receipt.operationDigest)],
     [3, receipt.operationId],
@@ -203,11 +203,28 @@ export function receiptMap(receipt) {
     [11, receipt.receiptKeyId],
     [12, bytes32(receipt.providerEvidenceHash || receipt.cloudTrailEventHash)],
     [13, receipt.enclaveMeasurement],
-  ])
+  ]
+  if (receipt.version >= 2) entries.push([14, receipt.actualTargetResourceId])
+  return new Map(entries)
 }
 
 export function receiptHash(receipt) {
   return sha256(Buffer.concat([domainBytes(DOMAINS.receipt), encodeCanonical(receiptMap(receipt))])).toString('hex')
+}
+
+export function disclosureHash({ operationId: id, receiptHash: hash, purpose, recipientId, fields, values }) {
+  return sha256(
+    Buffer.concat([
+      domainBytes(DOMAINS.disclosure),
+      encodeCanonical(new Map([
+        [1, id],
+        [2, bytes32(hash)],
+        [3, purpose],
+        [4, recipientId],
+        [5, fields.map((field, index) => [index + 1, [field, values[field]]])],
+      ])),
+    ]),
+  ).toString('hex')
 }
 
 export function publicOperation(core) {

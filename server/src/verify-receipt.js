@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { KMSClient, VerifyCommand } from '@aws-sdk/client-kms'
 import { AzureKeyVaultReceiptSigner } from './azure.js'
 import { receiptBundleFromState, verifyReceiptBundle } from './receipt.js'
@@ -9,7 +10,17 @@ if (!inputPath) {
   process.exitCode = 2
 } else {
   try {
-    const input = JSON.parse(readFileSync(inputPath, 'utf8'))
+    let input
+    if (inputPath.endsWith('.sqlite')) {
+      const database = new DatabaseSync(inputPath)
+      try {
+        input = JSON.parse(database.prepare('SELECT payload FROM deployseal_state WHERE id = 1').get()?.payload || 'null')
+      } finally {
+        database.close()
+      }
+    } else {
+      input = JSON.parse(readFileSync(inputPath, 'utf8'))
+    }
     const bundle = input.operations ? receiptBundleFromState(input) : input
     if (!bundle) throw new Error('no receipt found')
     const externalVerify = bundle.publicKey

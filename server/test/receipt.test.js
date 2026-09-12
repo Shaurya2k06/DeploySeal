@@ -30,3 +30,19 @@ test('receipt bundle verifies independently and rejects mutation', async () => {
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('receipt verifier reads the durable SQLite state', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'deployseal-receipt-sqlite-'))
+  const statePath = join(directory, 'state.sqlite')
+  try {
+    const broker = new DeploySealBroker({ statePath })
+    await broker.start({ scenario: 'happy' })
+    const { stdout } = await run(process.execPath, ['src/verify-receipt.js', statePath], {
+      cwd: new URL('..', import.meta.url),
+    })
+    assert.match(stdout, /"valid": true/u)
+    broker.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

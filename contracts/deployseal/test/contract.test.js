@@ -8,6 +8,7 @@ import {
 import { Contract, ledger } from '../src/managed/deployseal/contract/index.js'
 
 const NULLIFIER = Uint8Array.from({ length: 32 }, (_, index) => 255 - index)
+const OPERATION_DIGEST = Uint8Array.from({ length: 32 }, (_, index) => index + 1)
 const SALT = Uint8Array.from({ length: 32 }, (_, index) => index + 33)
 
 async function simulator(policy = {}, salt = SALT) {
@@ -43,13 +44,14 @@ async function simulator(policy = {}, salt = SALT) {
 test('Compact reservation is bound to the private root and consumes a nullifier once', async () => {
   const { contract, context } = await simulator()
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
-  const first = await contract.impureCircuits.reserve(context, policyRoot, NULLIFIER)
+  const first = await contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n)
   const state = ledger(first.context.currentQueryContext.state)
 
   assert.equal(state.activePolicyEpoch, 1n)
   assert.equal(state.operationNullifiers.member(NULLIFIER), true)
+  assert.equal(Buffer.from(state.operationDigests.lookup(NULLIFIER)).equals(Buffer.from(OPERATION_DIGEST)), true)
   assert.throws(
-    () => contract.impureCircuits.reserve(first.context, policyRoot, NULLIFIER),
+    () => contract.impureCircuits.reserve(first.context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n),
     /Operation already reserved/u,
   )
 })
@@ -59,7 +61,7 @@ test('Compact rejects a mismatched private policy witness', async () => {
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
 
   assert.throws(
-    () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER),
+    () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n),
     /Private vulnerability threshold failed/u,
   )
 })
@@ -72,16 +74,25 @@ test('Compact rejects private evaluation and approval failures', async () => {
     const { contract, context } = await simulator({ [field]: value })
     const policyRoot = ledger(context.currentQueryContext.state).policyRoot
     assert.throws(
-      () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER),
+      () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n),
       new RegExp(message, 'u'),
     )
   }
 })
 
+test('Compact rejects a stale public policy epoch', async () => {
+  const { contract, context } = await simulator()
+  const policyRoot = ledger(context.currentQueryContext.state).policyRoot
+  assert.throws(
+    () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 2n),
+    /Policy epoch mismatch/u,
+  )
+})
+
 test('Compact finalizes a reserved operation once', async () => {
   const { contract, context } = await simulator()
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
-  const reserved = await contract.impureCircuits.reserve(context, policyRoot, NULLIFIER)
+  const reserved = await contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n)
   const finalized = await contract.impureCircuits.finalize(
     reserved.context,
     NULLIFIER,
@@ -91,6 +102,7 @@ test('Compact finalizes a reserved operation once', async () => {
 
   assert.equal(state.finalizedNullifiers.member(NULLIFIER), true)
   assert.equal(state.receiptHashes.size(), 1n)
+  assert.equal(Buffer.from(state.receiptHashesByOperation.lookup(NULLIFIER)).equals(Buffer.from(Uint8Array.from({ length: 32 }, (_, index) => index + 1))), true)
   assert.throws(
     () => contract.impureCircuits.finalize(finalized.context, NULLIFIER, new Uint8Array(32)),
     /Operation already finalized/u,

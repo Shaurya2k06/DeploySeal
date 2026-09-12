@@ -4,7 +4,7 @@ import {
   sampleContractAddress,
 } from '@deployseal/deployseal-contract/runtime'
 import { Contract, ledger } from '@deployseal/deployseal-contract/contract'
-import { configuredPolicySalt, operationNullifier, sha256Hex } from './protocol.js'
+import { configuredPolicySalt, operationId, operationNullifier, sha256Hex } from './protocol.js'
 
 function uint16(value, name) {
   if (!Number.isInteger(value) || value < 0 || value > 65_535) {
@@ -48,7 +48,13 @@ function gasCost(value) {
 export async function verifyLocalCompactProof({ core, policy, evidence }) {
   const { contract, context, initialLedger } = await simulator(policy, evidence)
   const nullifier = operationNullifier(core)
-  const result = await contract.impureCircuits.reserve(context, initialLedger.policyRoot, nullifier)
+  const result = await contract.impureCircuits.reserve(
+    context,
+    initialLedger.policyRoot,
+    nullifier,
+    Buffer.from(operationId(core), 'hex'),
+    uint16(core.policyEpoch, 'core.policyEpoch'),
+  )
 
   return {
     status: 'verified',
@@ -66,7 +72,13 @@ export async function finalizeLocalCompactReceipt({ core, policy, evidence, rece
   const nullifier = operationNullifier(core)
   const policyRoot = Buffer.from(initialLedger.policyRoot).toString('hex')
   if (proof?.policyRoot && proof.policyRoot !== policyRoot) throw new Error('Compact policy root changed')
-  const reserved = await contract.impureCircuits.reserve(context, initialLedger.policyRoot, nullifier)
+  const reserved = await contract.impureCircuits.reserve(
+    context,
+    initialLedger.policyRoot,
+    nullifier,
+    Buffer.from(operationId(core), 'hex'),
+    uint16(core.policyEpoch, 'core.policyEpoch'),
+  )
   const result = await contract.impureCircuits.finalize(
     reserved.context,
     nullifier,

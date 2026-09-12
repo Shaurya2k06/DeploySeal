@@ -46,10 +46,15 @@ type Snapshot = {
 }
 
 type Disclosure = {
+  operationId: string
+  receiptHash: string
   fields: string[]
   values: Record<string, string | number>
   bundleHash: string
   purpose: string
+  recipientId: string
+  signature: string
+  keyId: string
 }
 
 const apiRoot = import.meta.env.VITE_API_URL || ''
@@ -124,6 +129,13 @@ function App() {
       .catch((requestError: Error) => setError(requestError.message))
   }, [])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      request<Snapshot>('/api/release').then(setSnapshot).catch(() => undefined)
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   async function run(path: string, body?: unknown) {
     setBusy(path)
     setError('')
@@ -146,7 +158,7 @@ function App() {
     if (isRecoverable) {
       await run('/api/release/recover')
     } else if (isFinal) {
-      await run('/api/reset')
+      await run(snapshot?.mode === 'azure-arm' ? '/api/release/start' : '/api/reset', snapshot?.mode === 'azure-arm' ? { scenario: 'crash' } : undefined)
       setDisclosure(null)
       setReceiptState('idle')
     } else {
@@ -226,10 +238,10 @@ function App() {
             </p>
             <div className="hero-actions">
               <button className="button button-primary" disabled={Boolean(busy)} onClick={primaryAction} type="button">
-                {busy ? 'Working…' : isRecoverable ? 'Recover operation' : isFinal ? 'Reset demo' : 'Run crash-safe demo'}
+                {busy ? 'Working…' : isRecoverable ? 'Recover operation' : isFinal ? snapshot?.mode === 'azure-arm' ? 'Run next operation' : 'Reset demo' : 'Run crash-safe demo'}
                 <span aria-hidden="true">↗</span>
               </button>
-              <button className="button button-quiet" disabled={Boolean(busy) || Boolean(operation)} onClick={() => run('/api/release/start', { scenario: 'happy' })} type="button">
+              <button className="button button-quiet" disabled={Boolean(busy) || Boolean(operation && !(isFinal && snapshot?.mode === 'azure-arm'))} onClick={() => run('/api/release/start', { scenario: 'happy' })} type="button">
                 Run clean path
               </button>
             </div>
@@ -262,8 +274,8 @@ function App() {
                   <div className="intent-line"><h3>private artifact</h3><span className="hash">{operation ? 'digest bound / undisclosed' : 'awaiting attestation'}</span></div>
                   <div className="intent-meta">
                     <div><span>Commit</span><strong>{operation ? 'private / attested' : '—'}</strong></div>
-                    <div><span>Target</span><strong>{operation ? 'private / policy-bound' : 'AWS / CloudFormation'}</strong></div>
-                    <div><span>Provider</span><strong>{operation?.providerId || 'AWS CloudFormation'}</strong></div>
+                    <div><span>Target</span><strong>{operation ? 'private / policy-bound' : snapshot?.mode === 'azure-arm' ? 'Azure / resource group' : 'AWS / CloudFormation'}</strong></div>
+                    <div><span>Provider</span><strong>{operation?.providerId || (snapshot?.mode === 'azure-arm' ? 'Azure Resource Manager' : 'AWS CloudFormation')}</strong></div>
                   </div>
                 </div>
                 <div className="gates-card">
@@ -304,7 +316,7 @@ function App() {
                       {receiptState === 'checking' ? 'Checking signature…' : receiptState === 'valid' ? 'Signature verified ✓' : 'Verify signature'}
                     </button>
                     <button className="button button-outline" disabled={Boolean(busy)} onClick={exportReceipt} type="button">Export receipt bundle ↗</button>
-                    <p className="small-note">{snapshot?.mode === 'aws-cloudformation' ? 'AWS KMS signs the canonical receipt after provider reconciliation.' : 'The local KMS emulator signs the same canonical receipt bytes used by the production KMS path.'}</p>
+                    <p className="small-note">{snapshot?.mode === 'aws-cloudformation' ? 'AWS KMS signs the canonical receipt after provider reconciliation.' : snapshot?.mode === 'azure-arm' ? 'Azure Key Vault signs the canonical receipt after the resource-group effect is reconciled.' : 'The local key emulator signs the same canonical receipt bytes used by the production KMS paths.'}</p>
                   </>
                 ) : <EmptyState title="No receipt yet" body="Run the release path to mint a signed provider receipt." />}
               </div>

@@ -28,6 +28,9 @@ test('Azure ARM adapter uses the operation id as the durable deployment name', a
     async request(url, input) {
       calls.push({ url, input })
       if (input.method === 'PUT') return deployment()
+      if (url.includes('/providers/Microsoft.Resources/tags/default?')) {
+        return { properties: { tags: { DeploySealOperationId: operationId, DeploySealArtifactDigest: operation.core.artifactDigest } } }
+      }
       const notFound = Object.assign(new Error('missing'), { statusCode: 404 })
       throw notFound
     },
@@ -41,6 +44,7 @@ test('Azure ARM adapter uses the operation id as the durable deployment name', a
   assert.equal(accepted.status, 'SUCCEEDED')
   assert.equal(accepted.actualArtifactDigest, operation.core.artifactDigest)
   assert.equal(accepted.actualTarget, operation.core.targetId)
+  assert.equal(accepted.actualTargetResourceId, '/subscriptions/sub/resourceGroups/rg')
 
   const mismatch = { ...deployment(), properties: { ...deployment().properties, parameters: { DeploySealOperationId: { value: operationId }, DeploySealArtifactDigest: { value: 'd'.repeat(64) } } } }
   assert.throws(
@@ -75,6 +79,7 @@ test('Azure TEE attestation requires a signed, non-debuggable SEV-SNP token', as
   const header = { alg: 'RS256', kid: 'test-key', jku: 'https://provider.attest.azure.net/certs' }
   const payload = {
     iss: 'https://provider.attest.azure.net',
+    iat: Math.floor(Date.now() / 1000) - 1,
     exp: Math.floor(Date.now() / 1000) + 300,
     'x-ms-attestation-type': 'sevsnpvm',
     'x-ms-compliance-status': 'azure-compliant-cvm',
@@ -86,8 +91,10 @@ test('Azure TEE attestation requires a signed, non-debuggable SEV-SNP token', as
   const token = `${signingInput}.${sign('RSA-SHA256', Buffer.from(signingInput), privateKey).toString('base64url')}`
   const previousToken = process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN
   const previousEndpoint = process.env.DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT
+  const previousMeasurements = process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS
   process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN = token
   process.env.DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT = 'https://provider.attest.azure.net/attest/SevSnpVm'
+  process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS = 'ab12'
   try {
     const attestation = await AzureTeeAttestation.fromEnv({
       fetchImpl: async () => ({ ok: true, async json() { return { keys: [{ kid: 'test-key', ...publicKey.export({ format: 'jwk' }) }] } } }),
@@ -98,5 +105,7 @@ test('Azure TEE attestation requires a signed, non-debuggable SEV-SNP token', as
     else process.env.DEPLOYSEAL_AZURE_ATTESTATION_TOKEN = previousToken
     if (previousEndpoint === undefined) delete process.env.DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT
     else process.env.DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT = previousEndpoint
+    if (previousMeasurements === undefined) delete process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS
+    else process.env.DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS = previousMeasurements
   }
 })

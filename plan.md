@@ -1,12 +1,16 @@
 # DeploySeal — implementation plan
 
-**Goal:** ship a reproducible GitHub → Midnight Compact → AWS CloudFormation path that proves confidential release policy, consumes a one-use operation authorization, survives an intentionally lost AWS response without duplicate execution, and finalizes one verifiable provider receipt.
+**Goal:** ship a reproducible GitHub → Midnight Compact → Azure ARM path that proves confidential release policy, consumes a one-use operation authorization, survives an intentionally lost Azure response without duplicate execution, and finalizes one verifiable provider receipt.
 
-This plan is milestone-ordered. Each milestone has an objective, tasks, exit criteria, and judge-visible evidence. Finish the narrow vertical slice before adding policy fields, providers, or presentation polish.
+This plan is milestone-ordered. Each milestone has an objective, tasks, exit criteria, and judge-visible evidence. The original AWS wording is retained in alternate-provider sections for comparison; the active implementation is Azure.
+
+## Status snapshot — 13 September 2026
+
+The narrow Azure vertical slice is implemented: real ARM deployment/tag effect, operation-name idempotency, CVM MAA verification with measurement and challenge binding, Key Vault receipt signing, SQLite crash recovery, GitHub BuildFact publication, signed EvidenceFact verification, and generated Compact operation/receipt bindings are in the checkout. The upgraded Compact contract and the next live broker rollout are operational follow-ups; the independent SBOM/model/residency/approval issuers remain external integrations and are not fabricated by this repository.
 
 ## 0. Current baseline and required inputs
 
-This is an implementation plan, not a completion claim. The checkout contains a Vite/React release console, a local durable coordinator/broker, a compiling Compact 0.23 reserve/finalize slice under `contracts/deployseal/`, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, an AWS CloudFormation/KMS adapter, and an independent receipt verifier. It still has no funded Midnight contract deployment, real AWS demo account, Nitro image, or production private-state store. The current local smoke checks are:
+This is an implementation plan, not a claim that every external dependency is owned by the repository. The checkout contains a Vite/React release console, a durable coordinator/broker, a compiling Compact reserve/finalize slice under `contracts/deployseal/`, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, Azure ARM/Key Vault/MAA adapters, an alternate AWS adapter, signed EvidenceFact verification, and an independent receipt verifier. The remaining external dependency is the funded Midnight contract deployment; the public Azure cloud path is already provisioned. The current local smoke checks are:
 
 ```sh
 npm --prefix client run build

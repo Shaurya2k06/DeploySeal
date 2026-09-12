@@ -1,10 +1,12 @@
-import { generateKeyPairSync, sign, verify } from 'node:crypto'
+import { generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import {
   DEMO_EVIDENCE,
   PRIVATE_POLICY,
+  disclosureHash,
   encodeCanonical,
   evaluatePolicy,
   makeOperationCore,
@@ -17,6 +19,7 @@ import {
   receiptHash,
   sha256Hex,
 } from './protocol.js'
+import { validateBuildFact } from './github.js'
 
 const DEFAULT_STATE_PATH = join(tmpdir(), 'deployseal-state.json')
 const FINAL_STATES = new Set(['FINALIZED', 'FAILED'])
@@ -25,6 +28,107 @@ const REQUIRED_PROVIDER_CAPABILITIES = [
   'durableQueryByOperationId',
   'receiptCanBindActualTargetAndDigest',
 ]
+
+class SqliteStateStore {
+  constructor(path) {
+    mkdirSync(dirname(path), { recursive: true })
+    this.db = new DatabaseSync(path)
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 1000;
+      CREATE TABLE IF NOT EXISTS deployseal_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS deployseal_lease (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        owner TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+    `)
+    this.path = path
+  }
+
+  read() {
+    const row = this.db.prepare('SELECT payload FROM deployseal_state WHERE id = 1').get()
+    if (row) return JSON.parse(row.payload)
+
+    // Keep an existing JSON state when an operator switches the live service
+    // to SQLite; the legacy file remains as a recovery backup.
+    const legacyPath = this.path.replace(/\.sqlite$/u, '.json')
+    if (!existsSync(legacyPath)) return null
+    const state = JSON.parse(readFileSync(legacyPath, 'utf8'))
+    this.write(state)
+    return state
+  }
+
+  write(state, owner = null) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if (owner && !this.owns(owner)) throw Object.assign(new Error('SQLite state lease is not held'), { code: 'STATE_LEASE_LOST' })
+      this.db.prepare(`
+        INSERT INTO deployseal_state (id, payload) VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+      `).run(JSON.stringify(state))
+      this.db.exec('COMMIT')
+    } catch (cause) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK')
+      throw cause
+    }
+  }
+
+  owns(owner) {
+    const row = this.db.prepare('SELECT owner, expires_at FROM deployseal_lease WHERE id = 1').get()
+    return row?.owner === owner && row.expires_at > Date.now()
+  }
+
+  async acquire(owner, timeoutMs = 300_000, leaseMs = 120_000) {
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      try {
+        this.db.exec('BEGIN IMMEDIATE')
+        const lease = this.db.prepare('SELECT owner, expires_at FROM deployseal_lease WHERE id = 1').get()
+        if (!lease || lease.expires_at <= Date.now() || lease.owner === owner) {
+          this.db.prepare(`
+            INSERT INTO deployseal_lease (id, owner, expires_at) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+          `).run(owner, Date.now() + leaseMs)
+          this.db.exec('COMMIT')
+          return
+        }
+        this.db.exec('ROLLBACK')
+      } catch (cause) {
+        if (this.db.isTransaction) this.db.exec('ROLLBACK')
+        if (Date.now() >= deadline) throw Object.assign(new Error('timed out acquiring SQLite state lease', { cause }), { code: 'STATE_LOCK_TIMEOUT' })
+      }
+      if (Date.now() >= deadline) throw Object.assign(new Error('timed out acquiring SQLite state lease'), { code: 'STATE_LOCK_TIMEOUT' })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  renew(owner, leaseMs = 120_000) {
+    try {
+      this.db.exec('BEGIN IMMEDIATE')
+      const result = this.db.prepare('UPDATE deployseal_lease SET expires_at = ? WHERE id = 1 AND owner = ? AND expires_at > ?').run(Date.now() + leaseMs, owner, Date.now())
+      this.db.exec('COMMIT')
+      return result.changes === 1
+    } catch {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK')
+      return false
+    }
+  }
+
+  release(owner) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.prepare('DELETE FROM deployseal_lease WHERE id = 1 AND owner = ?').run(owner)
+      this.db.exec('COMMIT')
+    } catch (cause) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK')
+      throw cause
+    }
+  }
+}
 
 function now() {
   return new Date().toISOString()
@@ -78,28 +182,43 @@ export class DeploySealBroker {
     receiptSigner = null,
     proofVerifier = null,
     finalizeVerifier = null,
+    attestationCheck = null,
+    buildFact = null,
+    crashProcess = process.env.DEPLOYSEAL_CRASH_MODE === 'kill' ? process.kill : null,
   } = {}) {
     this.statePath = statePath
+    this.store = statePath.endsWith('.sqlite') ? new SqliteStateStore(statePath) : null
+    this.leaseOwner = this.store ? `${process.pid}-${randomUUID()}` : null
+    this.leaseMs = Number(process.env.DEPLOYSEAL_STATE_LEASE_MS || 120_000)
+    this.leaseTimeoutMs = Number(process.env.DEPLOYSEAL_STATE_LOCK_TIMEOUT_MS || 300_000)
+    if (!Number.isSafeInteger(this.leaseMs) || this.leaseMs < 10_000) throw new Error('DEPLOYSEAL_STATE_LEASE_MS must be at least 10000')
+    if (!Number.isSafeInteger(this.leaseTimeoutMs) || this.leaseTimeoutMs < 1_000) throw new Error('DEPLOYSEAL_STATE_LOCK_TIMEOUT_MS must be at least 1000')
     this.policy = policy
     this.evidence = evidence
     this.providerAdapter = provider
     this.receiptSigner = receiptSigner
     this.proofVerifier = proofVerifier
     this.finalizeVerifier = finalizeVerifier
+    this.attestationCheck = attestationCheck
+    this.buildFact = buildFact
+    this.crashProcess = crashProcess
+    this.leaseHeld = false
+    this.leaseLost = false
     if (this.providerAdapter) assertProviderCapabilities(this.providerAdapter)
     this.lock = Promise.resolve()
     this.state = this.load()
   }
 
   load() {
-    if (!existsSync(this.statePath)) {
+    const stored = this.store ? this.store.read() : existsSync(this.statePath) ? JSON.parse(readFileSync(this.statePath, 'utf8')) : null
+    if (!stored) {
       const state = initialState(this.policy, this.evidence, this.receiptSigner)
       this.state = state
       this.save()
       return state
     }
 
-    const state = JSON.parse(readFileSync(this.statePath, 'utf8'))
+    const state = stored
     const expectedPolicy = { epoch: this.policy.epoch, root: policyRoot(this.policy, undefined, this.evidence) }
     let stateChanged = false
     if (state.policy?.epoch !== expectedPolicy.epoch || state.policy?.root !== expectedPolicy.root) {
@@ -139,6 +258,10 @@ export class DeploySealBroker {
   }
 
   save() {
+    if (this.store) {
+      this.store.write(this.state, this.leaseHeld ? this.leaseOwner : null)
+      return
+    }
     mkdirSync(dirname(this.statePath), { recursive: true })
     const tempPath = `${this.statePath}.tmp`
     writeFileSync(tempPath, JSON.stringify(this.state, null, 2), { mode: 0o600 })
@@ -146,13 +269,30 @@ export class DeploySealBroker {
   }
 
   exclusive(task) {
-    // ponytail: one process-local queue; use a transactional database lock when multiple broker workers are deployed.
     const previous = this.lock
     let release
     this.lock = new Promise((resolve) => {
       release = resolve
     })
-    const next = previous.catch(() => undefined).then(task)
+    const next = previous.catch(() => undefined).then(async () => {
+      if (!this.store) return task()
+      await this.store.acquire(this.leaseOwner, this.leaseTimeoutMs, this.leaseMs)
+      this.leaseHeld = true
+      this.leaseLost = false
+      const heartbeat = setInterval(() => {
+        if (!this.store.renew(this.leaseOwner, this.leaseMs)) this.leaseLost = true
+      }, Math.max(1_000, Math.floor(this.leaseMs / 3)))
+      try {
+        this.state = this.load()
+        const result = await task()
+        if (this.leaseLost) throw Object.assign(new Error('SQLite state lease was lost during the operation'), { code: 'STATE_LEASE_LOST' })
+        return result
+      } finally {
+        clearInterval(heartbeat)
+        this.leaseHeld = false
+        if (!this.leaseLost) this.store.release(this.leaseOwner)
+      }
+    })
     next.then(() => release(), () => release())
     return next
   }
@@ -163,6 +303,7 @@ export class DeploySealBroker {
   }
 
   snapshot() {
+    if (this.store && !this.leaseHeld) this.state = this.store.read() || this.state
     const operation = this.currentOperation()
     const providerEffectCount = Object.keys(this.state.provider.executions).length
 
@@ -229,13 +370,27 @@ export class DeploySealBroker {
   async start({ scenario = 'crash' } = {}) {
     return this.exclusive(async () => {
       const current = this.currentOperation()
-      if (current && scenario !== 'invalid') return { accepted: false, code: 'OPERATION_EXISTS', snapshot: this.snapshot() }
+      if (current && scenario !== 'invalid' && (!FINAL_STATES.has(current.status) || process.env.DEPLOYSEAL_ALLOW_NEW_OPERATION !== 'true')) {
+        return { accepted: false, code: 'OPERATION_EXISTS', snapshot: this.snapshot() }
+      }
+
+      if (this.buildFact) {
+        try {
+          validateBuildFact(this.buildFact)
+        } catch (cause) {
+          this.state.lastAttempt = { type: scenario, status: 'rejected', code: cause.code || 'BUILD_FACT_INVALID', at: now() }
+          this.save()
+          return { accepted: false, code: cause.code || 'BUILD_FACT_INVALID', snapshot: this.snapshot() }
+        }
+      }
 
       const core =
         scenario === 'invalid'
           ? makeOperationCore({ targetId: 'unauthorized-stack' })
           : makeOperationCore({
               repositoryId: this.evidence.repositoryId,
+              ...(this.evidence.runId === undefined ? {} : { runId: this.evidence.runId }),
+              ...(this.evidence.runAttempt === undefined ? {} : { runAttempt: this.evidence.runAttempt }),
               commitSha: this.evidence.commitSha,
               artifactDigest: this.evidence.artifactDigest,
               providerId: this.providerAdapter?.id || this.policy.allowedProviderId,
@@ -261,6 +416,15 @@ export class DeploySealBroker {
 
       const digest = operationDigest(core)
       const id = digest.toString('hex')
+      if (this.attestationCheck) {
+        try {
+          await this.attestationCheck({ operationDigest: digest, operation: core })
+        } catch {
+          this.state.lastAttempt = { type: scenario, status: 'rejected', code: 'ATTESTATION_REQUIRED', at: now() }
+          this.save()
+          return { accepted: false, code: 'ATTESTATION_REQUIRED', snapshot: this.snapshot() }
+        }
+      }
       const policyRoot = this.state.policy.root
       const proofHash = sha256Hex(
         encodeCanonical(
@@ -362,6 +526,10 @@ export class DeploySealBroker {
         operation,
       })
       const persisted = { ...execution, operationId: operation.operationId }
+      if (loseResponse && this.crashProcess) {
+        this.crashProcess(process.pid, 'SIGKILL')
+        await new Promise(() => {})
+      }
       this.state.provider.executions[operation.operationId] = persisted
       this.save()
       if (loseResponse) {
@@ -414,6 +582,7 @@ export class DeploySealBroker {
         receipt.providerCompletionTime !== execution.completedAt ||
         receipt.actualTarget !== execution.actualTarget ||
         receipt.actualArtifactDigest !== execution.actualArtifactDigest ||
+        (receipt.version >= 2 && receipt.actualTargetResourceId !== execution.actualTargetResourceId) ||
         receiptHash(receipt) !== hash
       ) {
         throw Object.assign(new Error('persisted receipt does not match the provider outcome'), {
@@ -422,13 +591,14 @@ export class DeploySealBroker {
       }
     } else {
       receipt = {
-        version: 1,
+        version: execution.actualTargetResourceId ? 2 : 1,
         operationDigest: operation.operationDigest,
         operationId: operation.operationId,
         permitHash: operation.permitHash,
         providerId: operation.core.providerId,
         providerOperationId: execution.providerOperationId,
         actualTarget: execution.actualTarget,
+        ...(execution.actualTargetResourceId ? { actualTargetResourceId: execution.actualTargetResourceId } : {}),
         actualArtifactDigest: execution.actualArtifactDigest,
         status: execution.status,
         providerCompletionTime: execution.completedAt,
@@ -576,10 +746,13 @@ export class DeploySealBroker {
     })
   }
 
-  async disclose(fields = []) {
+  async disclose(fields = [], { purpose = 'demo-audit', recipientId = 'audit-console' } = {}) {
     return this.exclusive(async () => {
       const operation = this.currentOperation()
-      if (!operation) return { accepted: false, code: 'NO_OPERATION', snapshot: this.snapshot() }
+      if (!operation?.receipt || operation.status !== 'FINALIZED') return { accepted: false, code: 'NO_FINALIZED_OPERATION', snapshot: this.snapshot() }
+      if (typeof purpose !== 'string' || purpose.length < 1 || purpose.length > 128 || typeof recipientId !== 'string' || recipientId.length < 1 || recipientId.length > 128) {
+        return { accepted: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
+      }
 
       const allowed = {
         policyEpoch: operation.core.policyEpoch,
@@ -588,21 +761,60 @@ export class DeploySealBroker {
         artifactDigest: `sha256:${operation.core.artifactDigest}`,
         outcome: operation.status,
       }
-      const selected = fields.filter((field) => Object.hasOwn(allowed, field))
+      const selected = fields.filter((field, index) => Object.hasOwn(allowed, field) && fields.indexOf(field) === index)
       const values = Object.fromEntries(selected.map((field) => [field, allowed[field]]))
-      const bundleHash = sha256Hex(
-        Buffer.concat([
-          Buffer.from('DeploySeal/DisclosureV1\0'),
-          encodeCanonical(new Map(selected.map((field, index) => [index + 1, [field, values[field]]]))),
-        ]),
-      )
-      this.state.audit.push({ fields: selected, bundleHash, at: now() })
+      const bundleHash = disclosureHash({
+        operationId: operation.operationId,
+        receiptHash: operation.receiptHash,
+        purpose,
+        recipientId,
+        fields: selected,
+        values,
+      })
+      const signature = this.receiptSigner
+        ? (await this.receiptSigner.sign(Buffer.from(bundleHash, 'hex'))).toString('base64')
+        : sign(null, Buffer.from(bundleHash, 'hex'), this.state.receiptKey.privateKey).toString('base64')
+      const keyId = this.receiptSigner?.id || this.state.receiptKey.id
+      this.state.audit.push({ fields: selected, bundleHash, signature, keyId, purpose, recipientId, at: now() })
       this.save()
       return {
         accepted: true,
-        disclosure: { fields: selected, values, bundleHash, purpose: 'demo-audit' },
+        disclosure: { operationId: operation.operationId, receiptHash: operation.receiptHash, fields: selected, values, bundleHash, purpose, recipientId, signature, keyId },
         snapshot: this.snapshot(),
       }
+    })
+  }
+
+  async verifyDisclosure(disclosure) {
+    return this.exclusive(async () => {
+      const operation = this.currentOperation()
+      if (!operation?.receipt || !disclosure || disclosure.operationId !== operation.operationId || disclosure.receiptHash !== operation.receiptHash || !Array.isArray(disclosure.fields) || !disclosure.values || typeof disclosure.signature !== 'string') {
+        return { valid: false, code: 'INVALID_DISCLOSURE_BUNDLE', snapshot: this.snapshot() }
+      }
+      if (
+        typeof disclosure.purpose !== 'string' || disclosure.purpose.length < 1 || disclosure.purpose.length > 128 ||
+        typeof disclosure.recipientId !== 'string' || disclosure.recipientId.length < 1 || disclosure.recipientId.length > 128 ||
+        disclosure.keyId !== operation.receipt.receiptKeyId
+      ) return { valid: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
+      const allowed = {
+        policyEpoch: operation.core.policyEpoch,
+        operationId: operation.operationId,
+        target: operation.core.targetId,
+        artifactDigest: `sha256:${operation.core.artifactDigest}`,
+        outcome: operation.status,
+      }
+      const selected = new Set()
+      if (disclosure.fields.some((field) => !Object.hasOwn(allowed, field) || selected.has(field))) return { valid: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
+      for (const field of disclosure.fields) {
+        selected.add(field)
+        if (!Object.hasOwn(disclosure.values, field) || disclosure.values[field] !== allowed[field]) return { valid: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
+      }
+      if (Object.keys(disclosure.values).some((field) => !selected.has(field))) return { valid: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
+      const expectedHash = disclosureHash(disclosure)
+      const signatureValid = this.receiptSigner
+        ? await this.receiptSigner.verify(Buffer.from(expectedHash, 'hex'), Buffer.from(disclosure.signature, 'base64'))
+        : verify(null, Buffer.from(expectedHash, 'hex'), this.state.receiptKey.publicKey, Buffer.from(disclosure.signature, 'base64'))
+      return { valid: expectedHash === disclosure.bundleHash && signatureValid, bundleHash: disclosure.bundleHash, keyId: disclosure.keyId, snapshot: this.snapshot() }
     })
   }
 
@@ -659,5 +871,9 @@ export class DeploySealBroker {
       this.save()
       return this.snapshot()
     })
+  }
+
+  close() {
+    this.store?.db.close()
   }
 }

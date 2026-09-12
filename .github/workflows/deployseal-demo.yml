@@ -92,3 +92,39 @@ jobs:
           path: |
             deployseal-demo.artifact
             ${{ runner.temp }}/build-fact.json
+
+      - name: Log in to Azure with workload identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.DEPLOYSEAL_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.DEPLOYSEAL_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.DEPLOYSEAL_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish the signed BuildFact to the Azure coordinator
+        env:
+          AZURE_KEY_VAULT: deploysealkv260912
+        run: |
+          az keyvault secret set --vault-name "$AZURE_KEY_VAULT" --name build-fact-json --file "$RUNNER_TEMP/build-fact.json" --only-show-errors >/dev/null
+          az keyvault secret set --vault-name "$AZURE_KEY_VAULT" --name build-adapter-public-key --file "$RUNNER_TEMP/deployseal-adapter-key.pub.pem" --only-show-errors >/dev/null
+
+      - name: Roll the Azure broker to this commit
+        if: ${{ vars.DEPLOYSEAL_AZURE_DEPLOY_ENABLED == 'true' }}
+        env:
+          AZURE_RESOURCE_GROUP: deployseal-azure-rg
+          AZURE_VM: deployseal-cvm
+        run: |
+          az vm run-command invoke \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_VM" \
+            --command-id RunShellScript \
+            --scripts 'set -Eeuo pipefail
+              git -c safe.directory=/opt/deployseal -C /opt/deployseal pull --ff-only
+              npm --prefix /opt/deployseal/contracts/deployseal ci
+              npm --prefix /opt/deployseal/server ci
+              npm --prefix /opt/deployseal/client ci
+              npm --prefix /opt/deployseal/client run build
+              find /var/www/deployseal -mindepth 1 -delete
+              cp -a /opt/deployseal/client/dist/. /var/www/deployseal/
+              /usr/local/bin/deployseal-refresh-build-fact
+              systemctl restart deployseal.service' \
+            --only-show-errors >/dev/null

@@ -21,6 +21,20 @@
             "type-name": "Bytes",
             "length": 32
           }
+        },
+        {
+          "name": "operationDigest",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "operationPolicyEpoch",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 65535
+          }
         }
       ],
       "result-type": {
@@ -164,8 +178,22 @@
       }
     },
     {
-      "name": "finalizedNullifiers",
+      "name": "operationDigests",
       "index": 3,
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "finalizedNullifiers",
+      "index": 4,
       "exported": true,
       "storage": "Set",
       "type": {
@@ -175,10 +203,24 @@
     },
     {
       "name": "receiptHashes",
-      "index": 4,
+      "index": 5,
       "exported": true,
       "storage": "Set",
       "type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "receiptHashesByOperation",
+      "index": 6,
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Bytes",
+        "length": 32
+      },
+      "value": {
         "type-name": "Bytes",
         "length": 32
       }
