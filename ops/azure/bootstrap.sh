@@ -5,7 +5,7 @@ exec > >(tee -a /var/log/deployseal-bootstrap.log) 2>&1
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y ca-certificates curl git build-essential pkg-config libssl-dev openssl tpm2-tools docker.io
+apt-get install -y ca-certificates curl git build-essential pkg-config libssl-dev openssl tpm2-tools docker.io nginx
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
@@ -18,6 +18,37 @@ else
 fi
 npm --prefix /opt/deployseal/contracts/deployseal install
 npm --prefix /opt/deployseal/server install
+npm --prefix /opt/deployseal/client install
+npm --prefix /opt/deployseal/client run build
+
+install -d -m 0755 /var/www/deployseal
+find /var/www/deployseal -mindepth 1 -delete
+cp -a /opt/deployseal/client/dist/. /var/www/deployseal/
+cat >/etc/nginx/sites-available/deployseal <<'EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    root /var/www/deployseal;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+EOF
+ln -sf /etc/nginx/sites-available/deployseal /etc/nginx/sites-enabled/deployseal
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl enable --now nginx
 
 if [ ! -x /usr/local/bin/azure-guest-attest ]; then
   export PATH="/root/.cargo/bin:$PATH"
@@ -83,7 +114,7 @@ install -d -o root -g deployseal -m 0750 /etc/deployseal
 temporary=/etc/deployseal/attestation.jwt.tmp
 for _ in $(seq 1 12); do
   user_data=$(openssl rand -hex 64)
-  raw=$(/usr/local/bin/azure-guest-attest tee-attest --endpoint "$DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT" --user-data "hex:$user_data" --no-pretty 2>>/var/log/deployseal-attestation.log || true)
+  raw=$(/usr/local/bin/azure-guest-attest tee-attest --endpoint "$DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT" --user-data "hex:$user_data" 2>>/var/log/deployseal-attestation.log || true)
   token=$(printf '%s' "$raw" | grep -Eo '[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -n 1 || true)
   if [ -n "$token" ]; then
     printf '%s\n' "$token" >"$temporary"
