@@ -250,6 +250,7 @@ Type=simple
 User=deployseal
 WorkingDirectory=/opt/deployseal
 EnvironmentFile=/etc/deployseal/server.env
+ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest
 ExecStart=/usr/bin/node /opt/deployseal/server/src/azure-start.js
 Restart=always
 RestartSec=5

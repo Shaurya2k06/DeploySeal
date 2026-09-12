@@ -152,6 +152,10 @@ Unit=deployseal-build-fact-refresh.service
 WantedBy=timers.target
 EOF
 
+if ! grep -q '^ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest$' /etc/systemd/system/deployseal.service; then
+  sed -i '/^ExecStart=\/usr\/bin\/node \/opt\/deployseal\/server\/src\/azure-start.js$/i ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest' /etc/systemd/system/deployseal.service
+fi
+
 chown -R deployseal:deployseal "$repo" /var/lib/deployseal
 systemctl daemon-reload
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer
