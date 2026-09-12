@@ -64,7 +64,8 @@ case "$user_data" in
 esac
 [ "${#user_data}" -eq 128 ] || { printf '%s\n' 'attestation challenge must be 64-byte hex' >&2; exit 2; }
 printf '%s\n' "$user_data" >/var/lib/deployseal/attestation/user-data.tmp
-chmod 0600 /var/lib/deployseal/attestation/user-data.tmp
+chown root:deployseal /var/lib/deployseal/attestation/user-data.tmp
+chmod 0640 /var/lib/deployseal/attestation/user-data.tmp
 for attempt in $(seq 1 12); do
   raw=$(/usr/local/bin/azure-guest-attest tee-attest --endpoint "$DEPLOYSEAL_AZURE_ATTESTATION_ENDPOINT" --user-data "hex:$user_data" 2>>/var/lib/deployseal/attestation/attestation.log || true)
   token=$(printf '%s' "$raw" | grep -Eo '[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -n 1 || true)
@@ -174,6 +175,8 @@ if [ ! -s /etc/deployseal/allowed-measurements ]; then
 fi
 chown root:deployseal /etc/deployseal/allowed-measurements
 chmod 0640 /etc/deployseal/allowed-measurements
+chown root:deployseal /var/lib/deployseal/attestation/token.jwt /var/lib/deployseal/attestation/user-data
+chmod 0640 /var/lib/deployseal/attestation/token.jwt /var/lib/deployseal/attestation/user-data
 systemctl start deployseal-build-fact-refresh.service
 systemctl restart deployseal.service
 sleep 2
