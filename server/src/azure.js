@@ -302,7 +302,8 @@ export class AzureKeyVaultReceiptSigner {
     this.algorithm = algorithm
     this.client = client
     this.keyUrlPromise = null
-    this.id = `${this.vaultUrl}/keys/${encodeURIComponent(this.keyName)}${keyVersion ? `/${encodeURIComponent(keyVersion)}` : ''}`
+    this.baseId = `${this.vaultUrl}/keys/${encodeURIComponent(this.keyName)}`
+    this.id = `${this.baseId}${keyVersion ? `/${encodeURIComponent(keyVersion)}` : ''}`
   }
 
   async keyUrl() {
@@ -320,8 +321,15 @@ export class AzureKeyVaultReceiptSigner {
     return this.keyUrlPromise
   }
 
-  async sign(message) {
-    const response = await this.client.request(`${await this.keyUrl()}/sign?api-version=${KEY_VAULT_API_VERSION}`, {
+  async keyUrlFor(keyId) {
+    if (keyId === null || keyId === undefined || keyId === this.baseId) return this.keyUrl()
+    if (typeof keyId !== 'string' || !keyId) throw error('AZURE_KEY_ID', 'receipt key id is invalid')
+    if (keyId !== this.id && !keyId.startsWith(`${this.baseId}/`)) throw error('AZURE_KEY_ID', 'receipt key id is not this Azure Key Vault key')
+    return keyId
+  }
+
+  async sign(message, keyId = null) {
+    const response = await this.client.request(`${await this.keyUrlFor(keyId)}/sign?api-version=${KEY_VAULT_API_VERSION}`, {
       scope: KEY_VAULT_SCOPE,
       method: 'POST',
       body: { alg: this.algorithm, value: encodeBase64Url(message) },
@@ -331,8 +339,8 @@ export class AzureKeyVaultReceiptSigner {
     return decodeBase64Url(response.value)
   }
 
-  async verify(message, signature) {
-    const response = await this.client.request(`${await this.keyUrl()}/verify?api-version=${KEY_VAULT_API_VERSION}`, {
+  async verify(message, signature, keyId = null) {
+    const response = await this.client.request(`${await this.keyUrlFor(keyId)}/verify?api-version=${KEY_VAULT_API_VERSION}`, {
       scope: KEY_VAULT_SCOPE,
       method: 'POST',
       body: {

@@ -192,6 +192,29 @@ test('audit disclosure returns only selected fields', async () => {
   }
 })
 
+test('audit disclosure keeps the receipt key id when a signer resolves a key version', async () => {
+  const { directory } = makeBroker()
+  const signer = {
+    id: 'https://vault.vault.azure.net/keys/deployseal',
+    async sign() {
+      this.id = 'https://vault.vault.azure.net/keys/deployseal/version-1'
+      return Buffer.from('signature')
+    },
+    async verify() {
+      return true
+    },
+  }
+  const broker = new DeploySealBroker({ statePath: join(directory, 'state.json'), receiptSigner: signer })
+  try {
+    await broker.start({ scenario: 'happy' })
+    const result = await broker.disclose(['outcome'])
+    assert.equal(result.disclosure.keyId, result.snapshot.operation.receipt.keyId)
+    assert.equal((await broker.verifyDisclosure(result.disclosure)).valid, true)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('SQLite state lease serializes separate broker workers and preserves checkpoints', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'deployseal-sqlite-'))
   const statePath = join(directory, 'state.sqlite')

@@ -590,6 +590,7 @@ export class DeploySealBroker {
         })
       }
     } else {
+      if (this.receiptSigner?.keyUrl) await this.receiptSigner.keyUrl()
       receipt = {
         version: execution.actualTargetResourceId ? 2 : 1,
         operationDigest: operation.operationDigest,
@@ -609,7 +610,7 @@ export class DeploySealBroker {
       }
       hash = receiptHash(receipt)
       signature = this.receiptSigner
-        ? (await this.receiptSigner.sign(Buffer.from(hash, 'hex'))).toString('base64')
+        ? (await this.receiptSigner.sign(Buffer.from(hash, 'hex'), receipt.receiptKeyId)).toString('base64')
         : sign(null, Buffer.from(hash, 'hex'), this.state.receiptKey.privateKey).toString('base64')
       operation.provider = execution
       operation.receipt = receipt
@@ -772,9 +773,9 @@ export class DeploySealBroker {
         values,
       })
       const signature = this.receiptSigner
-        ? (await this.receiptSigner.sign(Buffer.from(bundleHash, 'hex'))).toString('base64')
+        ? (await this.receiptSigner.sign(Buffer.from(bundleHash, 'hex'), operation.receipt.receiptKeyId)).toString('base64')
         : sign(null, Buffer.from(bundleHash, 'hex'), this.state.receiptKey.privateKey).toString('base64')
-      const keyId = this.receiptSigner?.id || this.state.receiptKey.id
+      const keyId = operation.receipt.receiptKeyId || this.receiptSigner?.id || this.state.receiptKey.id
       this.state.audit.push({ fields: selected, bundleHash, signature, keyId, purpose, recipientId, at: now() })
       this.save()
       return {
@@ -812,7 +813,7 @@ export class DeploySealBroker {
       if (Object.keys(disclosure.values).some((field) => !selected.has(field))) return { valid: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
       const expectedHash = disclosureHash(disclosure)
       const signatureValid = this.receiptSigner
-        ? await this.receiptSigner.verify(Buffer.from(expectedHash, 'hex'), Buffer.from(disclosure.signature, 'base64'))
+        ? await this.receiptSigner.verify(Buffer.from(expectedHash, 'hex'), Buffer.from(disclosure.signature, 'base64'), disclosure.keyId)
         : verify(null, Buffer.from(expectedHash, 'hex'), this.state.receiptKey.publicKey, Buffer.from(disclosure.signature, 'base64'))
       return { valid: expectedHash === disclosure.bundleHash && signatureValid, bundleHash: disclosure.bundleHash, keyId: disclosure.keyId, snapshot: this.snapshot() }
     })
@@ -827,7 +828,7 @@ export class DeploySealBroker {
       const computedHash = receiptHash(operation.receipt)
       const hashMatches = computedHash === operation.receiptHash
       const signatureValid = this.receiptSigner
-        ? await this.receiptSigner.verify(Buffer.from(computedHash, 'hex'), Buffer.from(operation.receiptSignature, 'base64'))
+        ? await this.receiptSigner.verify(Buffer.from(computedHash, 'hex'), Buffer.from(operation.receiptSignature, 'base64'), operation.receipt.receiptKeyId)
         : verify(
             null,
             Buffer.from(computedHash, 'hex'),
@@ -837,7 +838,7 @@ export class DeploySealBroker {
       return {
         valid: hashMatches && signatureValid,
         receiptHash: operation.receiptHash,
-        keyId: this.receiptSigner?.id || this.state.receiptKey.id,
+        keyId: operation.receipt.receiptKeyId || this.receiptSigner?.id || this.state.receiptKey.id,
         snapshot: this.snapshot(),
       }
     })
