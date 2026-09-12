@@ -19,6 +19,7 @@ type Proof = {
   kind: string
   hash: string
   txId?: string | null
+  txHash?: string | null
   policyRoot?: string
   nullifier?: string
 }
@@ -32,7 +33,7 @@ type Operation = {
   gates: Gate[]
   timeline: TimelineEvent[]
   proof: Proof | null
-  finalizationTxId?: string | null
+  finalizationTxHash?: string | null
   provider: {
     operationId: string | null
     requestToken: string
@@ -204,25 +205,25 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
     { label: 'GitHub workflow', value: 'deployseal-demo.yml', href: workflowUrl },
   ]
 
-  if (detailed && operation?.proof?.txId) {
+  if (detailed && operation?.proof?.txHash) {
     links.splice(1, 0, {
       label: 'Midnight reserve tx',
-      value: short(operation.proof.txId, 9),
-      href: midnightTransactionUrl(operation.proof.txId),
+      value: short(operation.proof.txHash, 9),
+      href: midnightTransactionUrl(operation.proof.txHash),
     })
   }
-  if (detailed && operation?.finalizationTxId) {
+  if (detailed && operation?.finalizationTxHash) {
     links.splice(2, 0, {
       label: 'Midnight finalize tx',
-      value: short(operation.finalizationTxId, 9),
-      href: midnightTransactionUrl(operation.finalizationTxId),
+      value: short(operation.finalizationTxHash, 9),
+      href: midnightTransactionUrl(operation.finalizationTxHash),
     })
   }
 
   return (
     <div className="explorer-links">
       {links.map((link) => <ExplorerLink key={link.label} {...link} />)}
-      {detailed && !operation?.proof?.txId && <p className="small-note">Run the live path to attach the current reserve and finalize transaction links.</p>}
+      {detailed && !operation?.proof?.txHash && <p className="small-note">Run the live path to attach the current reserve and finalize transaction links.</p>}
     </div>
   )
 }

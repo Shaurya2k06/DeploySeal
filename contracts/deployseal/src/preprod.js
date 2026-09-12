@@ -352,6 +352,7 @@ export async function createMidnightClient({
         nullifier: nullifier.toString('hex'),
         operationId: operationId(core),
         txId: null,
+        txHash: null,
         recovered: true,
       }
     }
@@ -364,6 +365,7 @@ export async function createMidnightClient({
         nullifier: nullifier.toString('hex'),
         operationId: operationId(core),
         txId: tx.public.txId,
+        txHash: tx.public.txHash,
       }
     } catch (cause) {
       const after = await contractState(networkProviders, contractAddress)
@@ -378,6 +380,7 @@ export async function createMidnightClient({
         nullifier: nullifier.toString('hex'),
         operationId: operationId(core),
         txId: null,
+        txHash: null,
         recovered: true,
       }
     }
@@ -394,18 +397,18 @@ export async function createMidnightClient({
       if (!bytesEqual(before.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex'))) {
         throw new Error('Midnight operation was finalized with a different receipt hash')
       }
-      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, recovered: true }
+      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, txHash: null, recovered: true }
     }
     try {
       const tx = await deployed.callTx.finalize(nullifier, Buffer.from(receiptHash, 'hex'))
-      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: tx.public.txId }
+      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: tx.public.txId, txHash: tx.public.txHash }
     } catch (cause) {
       const after = await contractState(networkProviders, contractAddress)
       if (!after.finalizedNullifiers.member(nullifier)) throw cause
       if (!bytesEqual(after.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex'))) {
         throw new Error('Midnight operation was finalized with a different receipt hash')
       }
-      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, recovered: true }
+      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, txHash: null, recovered: true }
     }
   }
 
@@ -431,7 +434,7 @@ async function main() {
         privateStateId,
         initialPrivateState,
       })
-      console.log(JSON.stringify({ network, contractAddress: deployed.deployTxData.public.contractAddress, txId: deployed.deployTxData.public.txId }))
+      console.log(JSON.stringify({ network, contractAddress: deployed.deployTxData.public.contractAddress, txId: deployed.deployTxData.public.txId, txHash: deployed.deployTxData.public.txHash }))
       return
     }
     const contractAddress = required('DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS')
@@ -448,12 +451,12 @@ async function main() {
         if (!bytesEqual(state.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
           throw new Error('operation nullifier is bound to a different operation digest')
         }
-        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, circuit: 'reserve', recovered: true }))
+        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, txHash: null, circuit: 'reserve', recovered: true }))
         return
       }
       const root = state.policyRoot
       const tx = await deployed.callTx.reserve(root, nullifier, Buffer.from(operationId(core), 'hex'), BigInt(core.policyEpoch))
-      console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: tx.public.txId, circuit: 'reserve' }))
+      console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: tx.public.txId, txHash: tx.public.txHash, circuit: 'reserve' }))
       return
     }
     if (command === 'finalize') {
@@ -463,11 +466,11 @@ async function main() {
       const state = await contractState(networkProviders, contractAddress)
       if (state.finalizedNullifiers.member(nullifier)) {
         if (!bytesEqual(state.receiptHashesByOperation.lookup(nullifier), receiptHash)) throw new Error('operation was finalized with a different receipt hash')
-        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, circuit: 'finalize', recovered: true }))
+        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, txHash: null, circuit: 'finalize', recovered: true }))
         return
       }
       const tx = await deployed.callTx.finalize(nullifier, receiptHash)
-      console.log(JSON.stringify({ network, contractAddress, txId: tx.public.txId, circuit: 'finalize' }))
+      console.log(JSON.stringify({ network, contractAddress, txId: tx.public.txId, txHash: tx.public.txHash, circuit: 'finalize' }))
       return
     }
     throw new Error(`unknown command: ${command}`)

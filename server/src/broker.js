@@ -321,7 +321,7 @@ export class DeploySealBroker {
             gates: operation.gates,
             timeline: operation.timeline,
             proof: operation.proof,
-            finalizationTxId: operation.compactFinalization?.txId || null,
+            finalizationTxHash: operation.compactFinalization?.txHash || null,
             provider: operation.provider
               ? {
                   operationId: operation.provider.providerOperationId,
