@@ -1,10 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { encode } from 'cbor2'
+import { privatePolicyRoot as compactPrivatePolicyRoot } from '@deployseal/deployseal-contract'
 
 export const DOMAINS = Object.freeze({
   policy: 'DeploySeal/PolicyV1',
+  evidence: 'DeploySeal/EvidenceV1',
+  approval: 'DeploySeal/ApprovalV1',
+  build: 'DeploySeal/BuildFactV1',
   operation: 'DeploySeal/OperationV1',
   nullifier: 'DeploySeal/OperationNullifierV1',
+  intent: 'DeploySeal/IntentNullifierV1',
+  lease: 'DeploySeal/BrokerLeaseV1',
   receipt: 'DeploySeal/ReceiptV1',
   disclosure: 'DeploySeal/DisclosureV1',
 })
@@ -42,6 +48,13 @@ export const DEMO_EVIDENCE = Object.freeze({
   evalScore: 97,
   approvalRoles: Object.freeze(['security', 'governance']),
 })
+
+export function configuredPolicySalt() {
+  const value = process.env.DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX
+  if (!value) return DEMO_SALT
+  if (!/^[0-9a-f]{64}$/u.test(value)) throw new Error('DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX must be 32-byte lowercase hex')
+  return Buffer.from(value, 'hex')
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest()
@@ -109,34 +122,29 @@ export function operationNullifier(core) {
   return sha256(Buffer.concat([domainBytes(DOMAINS.nullifier), operationDigest(core)]))
 }
 
-function policyMap(policy) {
-  return new Map([
-    [1, policy.version],
-    [2, policy.epoch],
-    [3, policy.allowedRepositoryId],
-    [4, policy.allowedWorkflow],
-    [5, policy.allowedProviderId],
-    [6, policy.allowedTargetId],
-    [7, policy.allowedRegion],
-    [8, policy.maxCriticalCves],
-    [9, policy.maxHighCves],
-    [10, policy.minEvalScore],
-    [11, policy.requiredApprovalRoles],
-    [12, policy.minimumApprovals],
-    [13, policy.permitTtlSeconds],
-  ])
+function compactPrivatePolicy(policy, evidence) {
+  return {
+    criticalCves: BigInt(evidence.criticalCves),
+    maxCriticalCves: BigInt(policy.maxCriticalCves),
+    highCves: BigInt(evidence.highCves),
+    maxHighCves: BigInt(policy.maxHighCves),
+    evalScore: BigInt(evidence.evalScore),
+    minEvalScore: BigInt(policy.minEvalScore),
+    approvalCount: BigInt(new Set(evidence.approvalRoles).size),
+    minimumApprovals: BigInt(policy.minimumApprovals),
+  }
 }
 
-export function policyRoot(policy = PRIVATE_POLICY, salt = DEMO_SALT) {
-  return sha256(Buffer.concat([domainBytes(DOMAINS.policy), encodeCanonical(policyMap(policy)), salt])).toString('hex')
+export function policyRoot(policy = PRIVATE_POLICY, salt = configuredPolicySalt(), evidence = DEMO_EVIDENCE) {
+  return Buffer.from(compactPrivatePolicyRoot(compactPrivatePolicy(policy, evidence), salt)).toString('hex')
 }
 
-export function permitHash(core, policy = PRIVATE_POLICY) {
+export function permitHash(core, policy = PRIVATE_POLICY, evidence = DEMO_EVIDENCE) {
   return sha256(
     Buffer.concat([
       Buffer.from('DeploySeal/PermitV1\0'),
       operationDigest(core),
-      bytes32(policyRoot(policy)),
+      bytes32(policyRoot(policy, configuredPolicySalt(), evidence)),
     ]),
   )
 }

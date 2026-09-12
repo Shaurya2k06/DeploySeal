@@ -59,6 +59,68 @@ test('lost provider response recovers once with the same token and receipt', asy
   }
 })
 
+test('unknown Midnight response resumes the same reserved operation', async () => {
+  const { directory } = makeBroker()
+  let proofCalls = 0
+  const broker = new DeploySealBroker({
+    statePath: join(directory, 'state.json'),
+    proofVerifier: async ({ operationDigest }) => {
+      proofCalls += 1
+      if (proofCalls === 1) throw new Error('response lost')
+      return { status: 'verified', kind: 'midnight-test', hash: operationDigest.toString('hex') }
+    },
+  })
+  try {
+    const interrupted = await broker.start({ scenario: 'happy' })
+    assert.equal(interrupted.interrupted, true)
+    assert.equal(interrupted.snapshot.operation.status, 'RECOVERY_REQUIRED')
+    const operationId = interrupted.snapshot.operation.operationId
+    const recovered = await broker.recover()
+    assert.equal(recovered.snapshot.operation.status, 'FINALIZED')
+    assert.equal(recovered.snapshot.operation.operationId, operationId)
+    assert.equal(proofCalls, 2)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('receipt signing is durable before Midnight finalization', async () => {
+  const { directory } = makeBroker()
+  let finalizeCalls = 0
+  let signCalls = 0
+  const broker = new DeploySealBroker({
+    statePath: join(directory, 'state.json'),
+    proofVerifier: async () => ({ status: 'verified', kind: 'midnight-test' }),
+    finalizeVerifier: async () => {
+      finalizeCalls += 1
+      if (finalizeCalls === 1) throw new Error('finalization response lost')
+      return { status: 'verified', kind: 'midnight-test' }
+    },
+    receiptSigner: {
+      id: 'test-kms',
+      async sign(message) {
+        signCalls += 1
+        return message
+      },
+      async verify() {
+        return true
+      },
+    },
+  })
+  try {
+    await assert.rejects(broker.start({ scenario: 'happy' }), /finalization response lost/u)
+    assert.equal(broker.currentOperation().status, 'RECEIPT_SIGNED')
+    const receiptHash = broker.currentOperation().receiptHash
+    const recovered = await broker.recover()
+    assert.equal(recovered.snapshot.operation.status, 'FINALIZED')
+    assert.equal(recovered.snapshot.operation.receipt.hash, receiptHash)
+    assert.equal(signCalls, 1)
+    assert.equal(finalizeCalls, 2)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('policy failure happens before provider invocation', async () => {
   const { broker, directory } = makeBroker()
   try {

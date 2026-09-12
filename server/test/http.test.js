@@ -29,12 +29,17 @@ test('HTTP demo completes recovery and keeps the provider effect at one', async 
     const start = await post('/api/release/start', { scenario: 'crash' })
     assert.equal(start.status, 200)
     assert.equal(start.body.snapshot.operation.status, 'RECOVERY_REQUIRED')
+    assert.equal(start.body.snapshot.operation.proof.kind, 'compact-local-simulator')
+    assert.equal(start.body.snapshot.policy.root, start.body.snapshot.operation.proof.policyRoot)
     assert.equal(start.body.snapshot.provider.effectCount, 1)
 
     const recover = await post('/api/release/recover')
     assert.equal(recover.body.snapshot.operation.status, 'FINALIZED')
     assert.equal(recover.body.snapshot.provider.effectCount, 1)
     assert.equal((await post('/api/receipt/verify')).body.valid, true)
+    const bundle = (await post('/api/receipt/export')).body.bundle
+    assert.equal(typeof bundle.signature, 'string')
+    assert.equal('privateKey' in bundle, false)
     assert.equal((await post('/api/release/replay')).body.code, 'OPERATION_ALREADY_CONSUMED')
 
     const disclosure = await post('/api/audit/disclose', { fields: ['policyEpoch', 'privatePolicy', 'outcome'] })

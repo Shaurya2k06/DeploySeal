@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
-pragma language_version 0.26;
+pragma language_version 0.22;
 
 import CompactStandardLibrary;
 
 // Minimal vertical slice: the broker emulator owns orchestration, while this
 // contract owns a committed private threshold and one-use reservation.
 struct PrivatePolicy {
+  criticalCves: Uint<16>;
+  maxCriticalCves: Uint<16>;
   highCves: Uint<16>;
   maxHighCves: Uint<16>;
+  evalScore: Uint<16>;
+  minEvalScore: Uint<16>;
+  approvalCount: Uint<16>;
+  minimumApprovals: Uint<16>;
 }
 
 export ledger policyRoot: Bytes<32>;
 export ledger activePolicyEpoch: Counter;
 export ledger operationNullifiers: Set<Bytes<32>>;
+export ledger finalizedNullifiers: Set<Bytes<32>>;
+export ledger receiptHashes: Set<Bytes<32>>;
 
 witness privatePolicy(): PrivatePolicy;
 witness privatePolicySalt(): Bytes<32>;
@@ -30,8 +38,22 @@ export circuit reserve(operationPolicyRoot: Bytes<32>, operationNullifier: Bytes
     persistentCommit<PrivatePolicy>(policy, privatePolicySalt()) == operationPolicyRoot,
     "Private policy commitment mismatch"
   );
+  assert(policy.criticalCves <= policy.maxCriticalCves, "Private critical vulnerability threshold failed");
   assert(policy.highCves <= policy.maxHighCves, "Private vulnerability threshold failed");
+  assert(policy.evalScore >= policy.minEvalScore, "Private evaluation threshold failed");
+  assert(policy.approvalCount >= policy.minimumApprovals, "Private approval quorum failed");
   const publicNullifier = disclose(operationNullifier);
   assert(!operationNullifiers.member(publicNullifier), "Operation already reserved");
   operationNullifiers.insert(publicNullifier);
+}
+
+// Minimal terminal transition: the receipt hash is public, but the receipt
+// contents and signing key remain outside this starter contract slice.
+export circuit finalize(operationNullifier: Bytes<32>, receiptHash: Bytes<32>): [] {
+  const publicNullifier = disclose(operationNullifier);
+  const publicReceiptHash = disclose(receiptHash);
+  assert(operationNullifiers.member(publicNullifier), "Unknown operation");
+  assert(!finalizedNullifiers.member(publicNullifier), "Operation already finalized");
+  finalizedNullifiers.insert(publicNullifier);
+  receiptHashes.insert(publicReceiptHash);
 }

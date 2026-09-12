@@ -1,9 +1,90 @@
 import { createServer } from 'node:http'
+import { createPublicKey } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { AwsCloudFormationProvider, AwsKmsReceiptSigner } from './aws.js'
 import { DeploySealBroker } from './broker.js'
+import { finalizeLocalCompactReceipt, verifyLocalCompactProof } from './compact.js'
+import { validateBuildFact, verifyBuildFact } from './github.js'
+import { DEMO_EVIDENCE, PRIVATE_POLICY } from './protocol.js'
 
 const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
-const broker = new DeploySealBroker()
+const useAws = process.env.DEPLOYSEAL_PROVIDER === 'aws-cloudformation'
+const useMidnight = useAws && Boolean(process.env.DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS && process.env.DEPLOYSEAL_MIDNIGHT_SEED_HEX)
+let midnightClientPromise
+
+async function midnightClient() {
+  midnightClientPromise ||= import('@deployseal/deployseal-contract/preprod').then(({ createMidnightClient }) => createMidnightClient())
+  return midnightClientPromise
+}
+
+function configuredJson(name, fallback) {
+  const value = process.env[name]
+  if (!value) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    throw Object.assign(new Error(`${name} must contain valid JSON`), { code: 'INVALID_CONFIG' })
+  }
+}
+
+function configuredBuildFact() {
+  const raw = process.env.DEPLOYSEAL_BUILD_FACT_JSON
+  const path = process.env.DEPLOYSEAL_BUILD_FACT_FILE
+  if (!raw && !path) return null
+  let fact
+  try {
+    fact = JSON.parse(raw || readFileSync(path, 'utf8'))
+  } catch {
+    throw Object.assign(new Error('DEPLOYSEAL_BUILD_FACT_JSON/FILE must contain valid JSON'), { code: 'INVALID_CONFIG' })
+  }
+  const keyValue = process.env.DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY
+  const keyPath = process.env.DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY_FILE
+  if (!keyValue && !keyPath) throw Object.assign(new Error('BuildFact verification key is required'), { code: 'INVALID_CONFIG' })
+  let publicKey
+  try {
+    publicKey = createPublicKey(keyValue || readFileSync(keyPath))
+  } catch {
+    throw Object.assign(new Error('BuildFact verification key is invalid'), { code: 'INVALID_CONFIG' })
+  }
+  try {
+    validateBuildFact(fact)
+  } catch {
+    throw Object.assign(new Error('BuildFact is expired or invalid'), { code: 'INVALID_CONFIG' })
+  }
+  if (!verifyBuildFact(fact, publicKey)) throw Object.assign(new Error('BuildFact signature is invalid'), { code: 'INVALID_CONFIG' })
+  if (fact.adapterPublicKey) {
+    const expected = publicKey.export({ format: 'der', type: 'spki' }).toString('base64')
+    if (fact.adapterPublicKey !== expected) throw Object.assign(new Error('BuildFact key binding is invalid'), { code: 'INVALID_CONFIG' })
+  }
+  return fact
+}
+
+const provider = useAws ? new AwsCloudFormationProvider() : null
+const receiptSigner = useAws ? new AwsKmsReceiptSigner() : null
+const policy = configuredJson('DEPLOYSEAL_POLICY_JSON', PRIVATE_POLICY)
+const buildFact = configuredBuildFact()
+const evidence = {
+  ...configuredJson('DEPLOYSEAL_EVIDENCE_JSON', DEMO_EVIDENCE),
+  ...(buildFact
+    ? {
+        repositoryId: buildFact.immutableRepositoryId,
+        commitSha: buildFact.commitSha,
+        artifactDigest: buildFact.artifactDigest,
+      }
+    : {}),
+}
+const proofVerifier = useMidnight
+  ? async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
+  : useAws
+    ? null
+    : verifyLocalCompactProof
+const finalizeVerifier = useMidnight
+  ? async ({ core, receiptHash, policyRoot }) => (await midnightClient()).finalize(core, receiptHash, policyRoot)
+  : useAws
+    ? null
+    : finalizeLocalCompactReceipt
+const broker = new DeploySealBroker({ provider, receiptSigner, proofVerifier, finalizeVerifier, policy, evidence })
 
 function headers() {
   return {
@@ -51,7 +132,7 @@ const server = createServer(async (request, response) => {
 
   try {
     if (request.method === 'GET' && url.pathname === '/api/health') {
-      send(response, 200, { ok: true, mode: 'local-emulator' })
+      send(response, 200, { ok: true, mode: broker.snapshot().mode })
       return
     }
 
@@ -92,8 +173,15 @@ const server = createServer(async (request, response) => {
       return
     }
 
+    if (request.method === 'POST' && url.pathname === '/api/receipt/export') {
+      const result = await broker.receiptBundle()
+      send(response, result.accepted ? 200 : 409, result)
+      return
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/reset') {
-      send(response, 200, { accepted: true, snapshot: await broker.reset() })
+      const result = await broker.reset()
+      send(response, result.accepted === false ? 409 : 200, result.accepted === false ? result : { accepted: true, snapshot: result })
       return
     }
 
@@ -109,5 +197,9 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     console.log(`DeploySeal local broker listening on http://${host}:${port}`)
   })
 }
+
+server.on('close', () => {
+  void midnightClientPromise?.then((client) => client.close())
+})
 
 export { server, broker }

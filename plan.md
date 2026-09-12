@@ -6,12 +6,13 @@ This plan is milestone-ordered. Each milestone has an objective, tasks, exit cri
 
 ## 0. Current baseline and required inputs
 
-This is an implementation plan, not a completion claim. The checkout now contains a Vite/React release console, a local coordinator/broker emulator with protocol tests, a compiling Compact reservation slice under `contracts/deployseal/`, and the original Hardhat Counter sample. It still has no real Midnight client/network deployment, GitHub workflow, AWS stack, Nitro image, or production release verifier. The current local smoke checks are:
+This is an implementation plan, not a completion claim. The checkout contains a Vite/React release console, a local durable coordinator/broker, a compiling Compact 0.22 reserve/finalize slice under `contracts/deployseal/`, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, an AWS CloudFormation/KMS adapter, and an independent receipt verifier. It still has no funded Midnight network deployment, real AWS demo account, Nitro image, or production private-state store. The current local smoke checks are:
 
 ```sh
 npm --prefix client run build
 npm --prefix client run lint
-npm --prefix contracts exec hardhat test
+npm --prefix contracts/deployseal test
+npm --prefix server test
 ```
 
 Those checks cover only the starter baseline. The DeploySeal acceptance test below is not satisfied until the milestone evidence exists.

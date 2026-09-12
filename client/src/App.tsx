@@ -165,6 +165,28 @@ function App() {
     setReceiptState(result && 'valid' in result && result.valid ? 'valid' : 'invalid')
   }
 
+  async function exportReceipt() {
+    setBusy('/api/receipt/export')
+    setError('')
+    try {
+      const result = await request<{ bundle?: Record<string, unknown> }>('/api/receipt/export', {
+        method: 'POST',
+        body: '{}',
+      })
+      if (!result.bundle) throw new Error('No receipt available')
+      const url = URL.createObjectURL(new Blob([JSON.stringify(result.bundle, null, 2)], { type: 'application/json' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'deployseal-receipt.json'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Request failed')
+    } finally {
+      setBusy('')
+    }
+  }
+
   function toggleField(field: string) {
     setSelectedFields((current) =>
       current.includes(field) ? current.filter((item) => item !== field) : [...current, field],
@@ -191,7 +213,7 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="environment"><i /> LOCAL EMULATOR</div>
+        <div className="environment"><i /> {snapshot?.mode === 'aws-cloudformation' ? 'AWS CLOUDFORMATION' : 'LOCAL COMPACT SIMULATOR'}</div>
       </header>
 
       <main id="top">
@@ -281,7 +303,8 @@ function App() {
                     <button className="button button-secondary" disabled={busy === '/api/receipt/verify'} onClick={verifyReceipt} type="button">
                       {receiptState === 'checking' ? 'Checking signature…' : receiptState === 'valid' ? 'Signature verified ✓' : 'Verify signature'}
                     </button>
-                    <p className="small-note">The local KMS emulator signs the same canonical receipt bytes that the production KMS path will verify.</p>
+                    <button className="button button-outline" disabled={Boolean(busy)} onClick={exportReceipt} type="button">Export receipt bundle ↗</button>
+                    <p className="small-note">{snapshot?.mode === 'aws-cloudformation' ? 'AWS KMS signs the canonical receipt after provider reconciliation.' : 'The local KMS emulator signs the same canonical receipt bytes used by the production KMS path.'}</p>
                   </>
                 ) : <EmptyState title="No receipt yet" body="Run the release path to mint a signed provider receipt." />}
               </div>

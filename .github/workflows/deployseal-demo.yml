@@ -1,0 +1,94 @@
+name: DeploySeal demo artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  build-and-attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+
+      - run: npm ci --prefix contracts/deployseal
+      - run: npm ci --prefix server
+
+      - name: Build deterministic demo artifact
+        run: node -e "require('node:fs').writeFileSync('deployseal-demo.artifact', 'DeploySeal demo artifact\\ncommit=' + process.env.GITHUB_SHA + '\\n')"
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: deployseal-demo.artifact
+
+      - name: Verify artifact provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify deployseal-demo.artifact --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/deployseal-demo.yml"
+
+      - name: Capture OIDC token for BuildFact adapter
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          const response = await fetch(`${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}&audience=deployseal`, {
+            headers: { authorization: `bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
+          })
+          if (!response.ok) throw new Error(`OIDC request failed: ${response.status}`)
+          const body = await response.json()
+          writeFileSync(`${process.env.RUNNER_TEMP}/deployseal-oidc.jwt`, body.value, { mode: 0o600 })
+          NODE
+
+      - name: Load allowlisted adapter key
+        env:
+          DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY: ${{ secrets.DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createPrivateKey, createPublicKey } from 'node:crypto'
+          import { writeFileSync } from 'node:fs'
+          if (!process.env.DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY) {
+            throw new Error('Configure the DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY repository secret before running this workflow')
+          }
+          const privateKey = createPrivateKey(process.env.DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY)
+          const publicKey = createPublicKey(privateKey)
+          writeFileSync(`${process.env.RUNNER_TEMP}/deployseal-adapter-key.pem`, privateKey.export({ format: 'pem', type: 'pkcs8' }), { mode: 0o600 })
+          writeFileSync(`${process.env.RUNNER_TEMP}/deployseal-adapter-key.pub.pem`, publicKey.export({ format: 'pem', type: 'spki' }), { mode: 0o644 })
+          NODE
+
+      - name: Build signed BuildFact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node server/src/build-fact.js \
+            --artifact deployseal-demo.artifact \
+            --repository "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/deployseal-demo.yml" \
+            --oidc-token-file "$RUNNER_TEMP/deployseal-oidc.jwt" \
+            --private-key-file "$RUNNER_TEMP/deployseal-adapter-key.pem" \
+            --public-key-file "$RUNNER_TEMP/deployseal-adapter-key.pub.pem" \
+            --adapter-key-id github-actions-build-adapter-v1 \
+            --audience deployseal \
+            --repository-id "$(gh api "repos/$GITHUB_REPOSITORY" --jq .id)" \
+            --workflow "DeploySeal demo artifact" \
+            --sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/build-fact.json"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployseal-demo-artifact
+          path: |
+            deployseal-demo.artifact
+            ${{ runner.temp }}/build-fact.json

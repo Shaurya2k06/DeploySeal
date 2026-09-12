@@ -5,7 +5,7 @@
 **Target:** AKINDO Midnight Buildathon, Wave 1  
 **Research cutoff:** 12 September 2026 (UTC)
 
-**Document status:** design context plus a checked-in local vertical slice. The repository now contains the release console, local durable broker/provider emulator, protocol vectors/tests, and a compiling Compact reservation contract; the real Midnight network, GitHub attestation, AWS, Nitro, and KMS path remains credential-gated.
+**Document status:** design context plus a checked-in release-control implementation. The repository contains the release console, durable broker/provider emulator, protocol vectors/tests, a compiling Compact reserve/finalize contract, a credential-gated MidnightJS/Preprod client, GitHub OIDC/attestation adapters, an AWS CloudFormation/KMS adapter, and an independent receipt verifier; the funded Midnight network, AWS account, Nitro, and KMS execution path remains credential-gated.
 
 ## 0. Current checkout and prerequisites
 
@@ -14,9 +14,9 @@ The repository was inspected on 12 September 2026. The evidence is intentionally
 | Area | Current evidence | Consequence |
 |---|---|---|
 | Root | `README.md` documents the local demo; `context.md` and `plan.md` remain the design/evidence artifacts | Keep the local path reproducible while real deployment inputs are supplied |
-| Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | Keep the existing Vite stack and replace emulator calls with Midnight/AWS adapters at the real-path milestone |
-| Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, and tests | Replace the local state/provider seam with Postgres, CloudFormation, Nitro, and KMS only after the local invariants remain green |
-| Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.26 contract compiled by toolchain 0.34.0 | Keep the sample green while expanding the separate Compact circuits |
+| Client | `client/` is a Vite/React release console with Release, Receipt, and Audit views | It selects local or AWS mode from the broker and resumes the same operation after reload |
+| Server | `server/` contains the coordinator/broker runtime, JSON durable state, protocol library, GitHub/AWS/Midnight adapters, receipt verifier, and tests | JSON is the reproducible demo store; production still needs a transactional multi-worker store and Nitro deployment |
+| Contracts | `contracts/` retains the Hardhat Counter sample and adds `deployseal/`, a Compact 0.22 reserve/finalize contract compiled by toolchain 0.30.0 for the stable ledger-v8 Preprod stack | The generated bindings drive both the simulator and the credential-gated Preprod client |
 | Secrets | `client/.env` and `contracts/.env` are empty, ignored placeholders | No credential is currently available or required for local synthetic tests |
 | Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
 

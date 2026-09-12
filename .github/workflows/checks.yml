@@ -23,9 +23,9 @@ jobs:
             server/package-lock.json
             contracts/deployseal/package-lock.json
 
+      - run: npm ci --prefix contracts/deployseal
       - run: npm ci --prefix server
       - run: npm ci --prefix client
-      - run: npm ci --prefix contracts/deployseal
 
       - name: Install Compact tool
         run: |
@@ -33,7 +33,7 @@ jobs:
           echo "$RUNNER_TEMP/compact" >> "$GITHUB_PATH"
 
       - name: Select Compact toolchain
-        run: compact update 0.34.0
+        run: compact update 0.30.0
 
       - run: npm --prefix contracts/deployseal run compact
       - run: npm --prefix contracts/deployseal test

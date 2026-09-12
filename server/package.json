@@ -5,13 +5,18 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "verify-receipt": "node src/verify-receipt.js"
   },
   "keywords": [],
   "author": "",
   "license": "Apache-2.0",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-cloudformation": "3.1131.0",
+    "@aws-sdk/client-cloudtrail": "3.1131.0",
+    "@aws-sdk/client-kms": "3.1131.0",
+    "@deployseal/deployseal-contract": "file:../contracts/deployseal",
     "cbor2": "^2.3.0"
   }
 }
