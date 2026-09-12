@@ -9,10 +9,10 @@ const secrets = {
   'server-policy-json': 'DEPLOYSEAL_POLICY_JSON',
   'server-evidence-json': 'DEPLOYSEAL_EVIDENCE_JSON',
   'contract-address': 'DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS',
-  'build-fact-json': 'DEPLOYSEAL_BUILD_FACT_FILE',
-  'build-adapter-public-key': 'DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY_FILE',
-  'evidence-facts-json': 'DEPLOYSEAL_EVIDENCE_FACTS_FILE',
-  'evidence-adapter-public-key': 'DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY_FILE',
+  'build-fact-json': 'DEPLOYSEAL_BUILD_FACT_JSON',
+  'build-adapter-public-key': 'DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY',
+  'evidence-facts-json': 'DEPLOYSEAL_EVIDENCE_FACTS_JSON',
+  'evidence-adapter-public-key': 'DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY',
 }
 
 for (const [name, variable] of Object.entries(secrets)) {
