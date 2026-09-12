@@ -12,8 +12,8 @@
 Completed and verified:
 
 - Azure SEV-SNP Confidential VM, MAA token verification, launch-measurement allowlist, fresh challenge-bound runtime data, ARM deployment/tag effect, Key Vault signing, and public receipt verification are live.
-- The broker has a real pre-provider crash seam, systemd restart/recovery, SQLite WAL state, and an inter-process lease. The next live crash/recovery run is still an operational verification step.
-- Compact generated artifacts now bind the operation digest and policy epoch and record receipt hashes by operation. The upgraded contract must be deployed before the live broker is rolled to those bindings.
+- The broker has a real pre-provider crash seam, systemd restart/recovery, SQLite WAL state, and an inter-process lease. A live run recovered the same ARM deployment token after the broker was killed.
+- Compact generated artifacts now bind the operation digest and policy epoch and record receipt hashes by operation. The upgraded contract is deployed on Midnight Preprod and the live broker is using its address.
 - GitHub Actions now verifies the artifact attestation, signs `BuildFactV1`, publishes it to Key Vault, and has a guarded VM rollout path.
 - Signed `EvidenceFactV1` envelopes are verified off-chain and can be required explicitly; the actual SBOM scanner, model evaluator, residency issuer, and human approval systems remain external inputs.
 
@@ -37,7 +37,7 @@ The repository was inspected on 12 September 2026. The evidence is intentionally
 | Secrets | No credentials are committed; Azure runtime secrets live in Key Vault and are materialized only on the CVM | Local synthetic tests need no credentials; Preprod and live rollout still need the corresponding external accounts |
 | Local tools | Node 24.6.0, npm 11.6.2, pnpm, Docker, and Foundry are available | Pin the versions used by CI before relying on them |
 
-The active Azure path has those cloud inputs configured. The remaining external inputs are a funded Midnight Preprod wallet/contract deployment and independently issued SBOM, evaluation, residency, and approval facts. Until those are supplied, the local path and the Azure path's signed BuildFact gate remain reproducible, while the optional EvidenceFact gate stays disabled.
+The active Azure path has those cloud inputs configured, including the funded Midnight Preprod wallet and deployed contract. The remaining external inputs are independently issued SBOM, evaluation, residency, and approval facts. Until those are provisioned, the optional EvidenceFact gate stays disabled; the live path still enforces signed GitHub BuildFact provenance.
 
 ## 1. Executive decision
 

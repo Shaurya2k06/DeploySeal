@@ -7,10 +7,12 @@ secret_dir=/etc/deployseal/secrets
 
 install -d -o deployseal -g deployseal -m 0750 "$secret_dir" /var/lib/deployseal/midnight
 install -d -o root -g deployseal -m 0750 /var/lib/deployseal/attestation
+git -c safe.directory="$repo" -C "$repo" stash push --quiet --message deployseal-generated-lock -- client/package-lock.json contracts/deployseal/package-lock.json server/package-lock.json
 git -c safe.directory="$repo" -C "$repo" pull --ff-only
 npm --prefix "$repo/contracts/deployseal" ci
 npm --prefix "$repo/server" ci
 npm --prefix "$repo/client" ci
+git -c safe.directory="$repo" -C "$repo" stash push --quiet --message deployseal-generated-lock -- client/package-lock.json contracts/deployseal/package-lock.json server/package-lock.json
 npm --prefix "$repo/client" run build
 find /var/www/deployseal -mindepth 1 -delete
 cp -a "$repo/client/dist/." /var/www/deployseal/
