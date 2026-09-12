@@ -5,7 +5,8 @@ repo=/opt/deployseal
 env_file=/etc/deployseal/server.env
 secret_dir=/etc/deployseal/secrets
 
-install -d -o deployseal -g deployseal -m 0750 "$secret_dir" /var/lib/deployseal/midnight /var/lib/deployseal/attestation
+install -d -o deployseal -g deployseal -m 0750 "$secret_dir" /var/lib/deployseal/midnight
+install -d -o root -g deployseal -m 0750 /var/lib/deployseal/attestation
 git -c safe.directory="$repo" -C "$repo" pull --ff-only
 npm --prefix "$repo/contracts/deployseal" ci
 npm --prefix "$repo/server" ci
@@ -35,7 +36,7 @@ set_env DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE /var/lib/deployseal/attestation/
 set_env DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE /etc/deployseal/allowed-measurements
 set_env DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE /var/lib/deployseal/attestation/user-data
 set_env DEPLOYSEAL_AZURE_ATTESTATION_HELPER /usr/local/bin/deployseal-attest
-set_env DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO false
+set_env DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO true
 set_env DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS 300
 chmod 0640 "$env_file"
 chown root:deployseal "$env_file"
@@ -55,7 +56,7 @@ set -eu
 set -a
 . /etc/deployseal/server.env
 set +a
-install -d -o deployseal -g deployseal -m 0750 /var/lib/deployseal/attestation
+install -d -o root -g deployseal -m 0750 /var/lib/deployseal/attestation
 temporary=/var/lib/deployseal/attestation/token.jwt.tmp
 user_data=${1:-$(openssl rand -hex 64)}
 case "$user_data" in
@@ -69,7 +70,8 @@ for attempt in $(seq 1 12); do
   token=$(printf '%s' "$raw" | grep -Eo '[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -n 1 || true)
   if [ -n "$token" ]; then
     printf '%s\n' "$token" >"$temporary"
-    chmod 0600 "$temporary"
+    chown root:deployseal "$temporary"
+    chmod 0640 "$temporary"
     mv -f "$temporary" /var/lib/deployseal/attestation/token.jwt
     mv -f /var/lib/deployseal/attestation/user-data.tmp /var/lib/deployseal/attestation/user-data
     exit 0
@@ -90,7 +92,6 @@ Before=deployseal.service
 
 [Service]
 Type=oneshot
-User=deployseal
 ExecStart=/usr/local/bin/deployseal-attest
 RemainAfterExit=yes
 
@@ -149,19 +150,25 @@ Unit=deployseal-build-fact-refresh.service
 WantedBy=timers.target
 EOF
 
-if grep -q '^ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest$' /etc/systemd/system/deployseal.service; then
-  sed -i 's|^ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest$|ExecStartPre=/usr/local/bin/deployseal-attest|' /etc/systemd/system/deployseal.service
-elif ! grep -q '^ExecStartPre=/usr/local/bin/deployseal-attest$' /etc/systemd/system/deployseal.service; then
-  sed -i '/^ExecStart=\/usr\/bin\/node \/opt\/deployseal\/server\/src\/azure-start.js$/i ExecStartPre=/usr/local/bin/deployseal-attest' /etc/systemd/system/deployseal.service
+if grep -q '^ExecStartPre=/usr/local/bin/deployseal-attest$' /etc/systemd/system/deployseal.service; then
+  sed -i 's|^ExecStartPre=/usr/local/bin/deployseal-attest$|ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest|' /etc/systemd/system/deployseal.service
+elif ! grep -q '^ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest$' /etc/systemd/system/deployseal.service; then
+  sed -i '/^ExecStart=\/usr\/bin\/node \/opt\/deployseal\/server\/src\/azure-start.js$/i ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest' /etc/systemd/system/deployseal.service
 fi
+sed -i '/^NoNewPrivileges=true$/d' /etc/systemd/system/deployseal.service
 
-chown -R deployseal:deployseal "$repo" /var/lib/deployseal
-rm -f /etc/sudoers.d/deployseal-attestation
+chown -R deployseal:deployseal "$repo" /var/lib/deployseal/midnight
+chown root:deployseal /var/lib/deployseal/attestation
+chmod 0750 /var/lib/deployseal/attestation
+printf '%s\n' 'deployseal ALL=(root) NOPASSWD: /usr/local/bin/deployseal-attest *' >/etc/sudoers.d/deployseal-attestation
+chmod 0440 /etc/sudoers.d/deployseal-attestation
+visudo -cf /etc/sudoers.d/deployseal-attestation
 systemctl daemon-reload
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer
 systemctl start deployseal-build-fact-refresh.timer
 systemctl restart deployseal-attestation.service
-chown -R deployseal:deployseal /var/lib/deployseal/attestation
+chown root:deployseal /var/lib/deployseal/attestation /var/lib/deployseal/attestation/token.jwt /var/lib/deployseal/attestation/user-data
+chmod 0750 /var/lib/deployseal/attestation
 if [ ! -s /etc/deployseal/allowed-measurements ]; then
   node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const token=readFileSync('/var/lib/deployseal/attestation/token.jwt','utf8').trim(); const payload=JSON.parse(Buffer.from(token.split('.')[1], 'base64url')); const measurement=payload['x-ms-sevsnpvm-launchmeasurement']; if (!measurement) throw new Error('attestation measurement missing'); writeFileSync('/etc/deployseal/allowed-measurements', measurement.toLowerCase()+'\\n', { mode: 0o640 });"
 fi

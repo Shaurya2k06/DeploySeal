@@ -10,7 +10,8 @@ curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
 
-install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/secrets /var/lib/deployseal/midnight /var/lib/deployseal/attestation
+install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/secrets /var/lib/deployseal/midnight
+install -d -o root -g deployseal -m 0750 /var/lib/deployseal/attestation
 if [ ! -d /opt/deployseal/.git ]; then
   git clone --depth 1 https://github.com/Shaurya2k06/DeploySeal.git /opt/deployseal
 else
@@ -76,7 +77,7 @@ DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE=/var/lib/deployseal/attestation/token.jw
 DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE=/etc/deployseal/allowed-measurements
 DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE=/var/lib/deployseal/attestation/user-data
 DEPLOYSEAL_AZURE_ATTESTATION_HELPER=/usr/local/bin/deployseal-attest
-DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO=false
+DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO=true
 DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS=300
 DEPLOYSEAL_REQUIRE_BUILD_FACT=true
 DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION=true
@@ -121,7 +122,7 @@ set -Eeuo pipefail
 set -a
 source /etc/deployseal/server.env
 set +a
-install -d -o deployseal -g deployseal -m 0750 /var/lib/deployseal/attestation
+install -d -o root -g deployseal -m 0750 /var/lib/deployseal/attestation
 temporary=/var/lib/deployseal/attestation/token.jwt.tmp
 user_data=${1:-$(openssl rand -hex 64)}
 if [[ ! "$user_data" =~ ^[0-9a-f]{128}$ ]]; then
@@ -135,7 +136,8 @@ for _ in $(seq 1 12); do
   token=$(printf '%s' "$raw" | grep -Eo '[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -n 1 || true)
   if [ -n "$token" ]; then
     printf '%s\n' "$token" >"$temporary"
-    chmod 0600 "$temporary"
+    chown root:deployseal "$temporary"
+    chmod 0640 "$temporary"
     mv -f "$temporary" /var/lib/deployseal/attestation/token.jwt
     mv -f /var/lib/deployseal/attestation/user-data.tmp /var/lib/deployseal/attestation/user-data
     exit 0
@@ -174,7 +176,6 @@ Before=deployseal.service
 
 [Service]
 Type=oneshot
-User=deployseal
 ExecStart=/usr/local/bin/deployseal-attest
 RemainAfterExit=yes
 
@@ -244,19 +245,22 @@ Type=simple
 User=deployseal
 WorkingDirectory=/opt/deployseal
 EnvironmentFile=/etc/deployseal/server.env
-ExecStartPre=/usr/local/bin/deployseal-attest
+ExecStartPre=/usr/bin/sudo -n /usr/local/bin/deployseal-attest
 ExecStart=/usr/bin/node /opt/deployseal/server/src/azure-start.js
 Restart=always
 RestartSec=5
-NoNewPrivileges=true
 PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-chown -R deployseal:deployseal /opt/deployseal /var/lib/deployseal
-rm -f /etc/sudoers.d/deployseal-attestation
+chown -R deployseal:deployseal /opt/deployseal /var/lib/deployseal/midnight
+chown root:deployseal /var/lib/deployseal/attestation
+chmod 0750 /var/lib/deployseal/attestation
+printf '%s\n' 'deployseal ALL=(root) NOPASSWD: /usr/local/bin/deployseal-attest *' >/etc/sudoers.d/deployseal-attestation
+chmod 0440 /etc/sudoers.d/deployseal-attestation
+visudo -cf /etc/sudoers.d/deployseal-attestation
 systemctl daemon-reload
 systemctl enable --now deployseal-proof.service
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer
