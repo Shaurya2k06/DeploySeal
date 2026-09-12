@@ -154,6 +154,7 @@ EOF
 chown -R deployseal:deployseal "$repo" /var/lib/deployseal
 systemctl daemon-reload
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer
+systemctl start deployseal-build-fact-refresh.timer
 systemctl restart deployseal-attestation.service
 if [ ! -s /etc/deployseal/allowed-measurements ]; then
   node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const token=readFileSync('/etc/deployseal/attestation.jwt','utf8').trim(); const payload=JSON.parse(Buffer.from(token.split('.')[1], 'base64url')); const measurement=payload['x-ms-sevsnpvm-launchmeasurement']; if (!measurement) throw new Error('attestation measurement missing'); writeFileSync('/etc/deployseal/allowed-measurements', measurement.toLowerCase()+'\\n', { mode: 0o640 });"

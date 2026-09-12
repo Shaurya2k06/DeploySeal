@@ -263,6 +263,7 @@ chown -R deployseal:deployseal /opt/deployseal /var/lib/deployseal
 systemctl daemon-reload
 systemctl enable --now deployseal-proof.service
 systemctl enable deployseal-attestation.service deployseal.service deployseal-build-fact-refresh.timer
+systemctl start deployseal-build-fact-refresh.timer
 systemctl restart deployseal-attestation.service
 if [ ! -s /etc/deployseal/allowed-measurements ]; then
   node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const token=readFileSync('/etc/deployseal/attestation.jwt','utf8').trim(); const p=JSON.parse(Buffer.from(token.split('.')[1], 'base64url')); const m=p['x-ms-sevsnpvm-launchmeasurement']; if (!m) throw new Error('attestation measurement missing'); writeFileSync('/etc/deployseal/allowed-measurements', m.toLowerCase()+'\n', { mode: 0o640 });"
