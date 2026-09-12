@@ -34,6 +34,7 @@ set_env DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION true
 set_env DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE /etc/deployseal/allowed-measurements
 set_env DEPLOYSEAL_AZURE_ATTESTATION_USER_DATA_FILE /etc/deployseal/attestation.user-data
 set_env DEPLOYSEAL_AZURE_ATTESTATION_HELPER /usr/local/bin/deployseal-attest
+set_env DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO true
 set_env DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS 300
 chmod 0640 "$env_file"
 

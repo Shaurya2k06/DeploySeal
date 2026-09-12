@@ -482,13 +482,16 @@ export class AzureTeeAttestation {
     return this
   }
 
-  async attestChallenge(challenge, { command = process.env.DEPLOYSEAL_AZURE_ATTESTATION_HELPER || null } = {}) {
+  async attestChallenge(challenge, {
+    command = process.env.DEPLOYSEAL_AZURE_ATTESTATION_HELPER || null,
+    useSudo = process.env.DEPLOYSEAL_AZURE_ATTESTATION_USE_SUDO === 'true',
+  } = {}) {
     const userData = /^[0-9a-f]{64}$/u.test(challenge || '')
       ? `${challenge}${sha256Hex(Buffer.from(challenge, 'hex'))}`
       : challenge
     if (!command) return this.refresh({ expectedUserData: userData })
     if (!/^[0-9a-f]{128}$/u.test(userData || '')) throw error('AZURE_ATTESTATION_CHALLENGE', 'operation attestation challenge must be 32-byte hex or an expanded 64-byte lowercase hex value')
-    await execFileAsync(command, [userData], { maxBuffer: 128 * 1024 })
+    await execFileAsync(useSudo ? 'sudo' : command, useSudo ? ['-n', command, userData] : [userData], { maxBuffer: 128 * 1024 })
     return this.refresh({ expectedUserData: userData })
   }
 }
