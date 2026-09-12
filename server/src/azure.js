@@ -113,7 +113,9 @@ function deploymentTemplate() {
 }
 
 function parameterValue(deployment, name) {
-  return deployment?.properties?.parameters?.[name]?.value
+  const parameters = deployment?.properties?.parameters || {}
+  const key = Object.keys(parameters).find((candidate) => candidate.toLowerCase() === name.toLowerCase())
+  return parameters[key]?.value
 }
 
 function deploymentEvidence(deployment) {
