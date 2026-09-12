@@ -66,7 +66,8 @@ test('Azure Key Vault signer signs and verifies receipt digests without exportin
   assert.equal(await signer.verify(message, signature), true)
   assert.equal(calls[1].input.body.alg, 'PS256')
   assert.equal(calls[1].input.body.value, message.toString('base64url'))
-  assert.equal(calls[2].input.body.signature, signature.toString('base64url'))
+  assert.equal(calls[2].input.body.digest, message.toString('base64url'))
+  assert.equal(calls[2].input.body.value, signature.toString('base64url'))
 })
 
 test('Azure TEE attestation requires a signed, non-debuggable SEV-SNP token', async () => {

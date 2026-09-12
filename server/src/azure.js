@@ -294,8 +294,8 @@ export class AzureKeyVaultReceiptSigner {
       method: 'POST',
       body: {
         alg: this.algorithm,
-        value: encodeBase64Url(message),
-        signature: encodeBase64Url(signature),
+        digest: encodeBase64Url(message),
+        value: encodeBase64Url(signature),
       },
     })
     return response?.value === true
