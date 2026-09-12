@@ -155,7 +155,7 @@ Do not commit raw tokens, credentials, policy plaintext, AWS account details, or
 
 ## 3. Version and dependency strategy
 
-Use one tested Midnight dependency line from the current official example and commit the lockfile. Do not treat version numbers in research notes as implementation requirements: resolve the compatible Compact compiler, runtime, MidnightJS, wallet, and local-dev versions from the [official example](https://github.com/midnightntwrk/example-bboard) and [release notes](https://docs.midnight.network/relnotes/overview) at Milestone 0, then record the exact set in `.tool-versions` and the release manifest. Rebuild the contract and rerun vectors after any version change.
+Use one tested Midnight dependency line from the current official example and commit the lockfile. Do not treat version numbers in research notes as implementation requirements: resolve the compatible Compact compiler, runtime, MidnightJS, wallet, and local-dev versions from the [official example](https://github.com/midnightntwrk/example-zkloan) and [release notes](https://docs.midnight.network/relnotes/overview) at Milestone 0, then record the exact set in `.tool-versions` and the release manifest. Rebuild the contract and rerun vectors after any version change.
 
 Expected Midnight packages/capabilities:
 
