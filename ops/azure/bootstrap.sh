@@ -14,7 +14,7 @@ install -d -o deployseal -g deployseal -m 0750 /opt/deployseal /etc/deployseal/s
 if [ ! -d /opt/deployseal/.git ]; then
   git clone --depth 1 https://github.com/Shaurya2k06/DeploySeal.git /opt/deployseal
 else
-  git -C /opt/deployseal pull --ff-only
+  git -c safe.directory=/opt/deployseal -C /opt/deployseal pull --ff-only
 fi
 npm --prefix /opt/deployseal/contracts/deployseal install
 npm --prefix /opt/deployseal/server install
