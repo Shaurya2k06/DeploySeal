@@ -246,59 +246,97 @@ function LandingPage() {
           <span>Deploy<span>Seal</span></span>
         </a>
         <nav className="landing-nav" aria-label="Primary navigation">
+          <a href="#why">Why DeploySeal</a>
           <a href="#flow">The flow</a>
           <a href="#public-record">Public record</a>
-          <a className="landing-nav-cta" href="/demo">Open demo <span aria-hidden="true">↗</span></a>
         </nav>
+        <div className="nav-actions">
+          <a className="button button-quiet nav-github" href={repositoryUrl} rel="noreferrer" target="_blank">GitHub</a>
+          <a className="button button-primary nav-demo" href="/demo">Open demo <span aria-hidden="true">↗</span></a>
+        </div>
         <div className="environment"><i /> {live ? 'LIVE · AZURE ARM' : snapshot ? 'LOCAL DEMO READY' : 'CONNECTING'}</div>
       </header>
 
       <main className="landing-main">
         <section className="landing-hero">
-          <div className="landing-hero-copy">
-            <p className="eyebrow"><span>00</span> Confidential release control</p>
+          <div className="landing-hero-inner">
+            <p className="eyebrow hero-eyebrow"><span>DEPLOYSEAL / 00</span> Confidential release control</p>
             <h1>Private policy.<br /><em>Public proof.</em></h1>
-            <p className="lede">Deploy regulated software without putting the policy on display. DeploySeal turns private evidence into one authorized cloud effect and one verifiable receipt.</p>
+            <p className="lede">Ship regulated software without putting the policy on display. DeploySeal turns private evidence into one authorized cloud effect and one verifiable receipt.</p>
             <div className="hero-actions">
               <a className="button button-primary" href="/demo">Run the live demo <span aria-hidden="true">↗</span></a>
-              <a className="button button-quiet" href={`${repositoryUrl}#readme`} rel="noreferrer" target="_blank">Read the protocol</a>
+              <a className="button button-quiet" href="#flow">See how it works</a>
             </div>
-            <div className="landing-readout">
-              <div><span>Mode</span><strong>{live ? 'AZURE / SEV-SNP' : snapshot ? 'COMPACT SIMULATOR' : '—'}</strong></div>
-              <div><span>Provider effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong></div>
-              <div><span>Receipt</span><strong>{operation?.receipt?.status || 'AWAITING RUN'}</strong></div>
-            </div>
+            <p className="hero-micro"><span className="status-dot" /> {live ? 'Live on Midnight Preprod + Azure ARM' : snapshot ? 'Local simulator ready for the same flow' : 'Connecting to the release broker'} <span>·</span> one-use authorization</p>
           </div>
-          <div className="landing-art" aria-label="A release moving from private policy to public receipt">
-            <div className="landing-art-top"><span>DEPLOYSEAL / LIVE TRACE</span><span>ONE USE / NO LEAK</span></div>
-            <div className="landing-orbit">
-              <span className="orbit orbit-one" />
-              <span className="orbit orbit-two" />
-              <span className="orbit-node node-one" />
-              <span className="orbit-node node-two" />
-              <div className="landing-core"><Mark small /><span>PRIVATE<br />POLICY</span></div>
-              <div className="landing-float float-one"><span>01 / PROOF</span><strong>COMPACT</strong></div>
-              <div className="landing-float float-two"><span>02 / EFFECT</span><strong>AZURE ARM</strong></div>
-              <div className="landing-float float-three"><span>03 / RECEIPT</span><strong>KEY VAULT</strong></div>
-            </div>
-            <div className="landing-art-bottom"><span>POLICY → AUTHORIZATION → EFFECT → RECEIPT</span><b>↗</b></div>
+          <div className="landing-documents" aria-label="A release moving from private evidence to a public receipt">
+            <article className="document-card document-before">
+              <div className="document-top"><span>RELEASE DOSSIER</span><strong>PRIVATE</strong></div>
+              <div className="document-title"><span className="document-icon">◌</span><div><strong>build / 2026.09</strong><span>evidence bundle</span></div></div>
+              <div className="document-lines">
+                <div><span>SBOM</span><i /><b>PRIVATE</b></div>
+                <div><span>EVALUATION</span><i /><b>PRIVATE</b></div>
+                <div><span>RESIDENCY</span><i /><b>PRIVATE</b></div>
+                <div><span>APPROVALS</span><i /><b>PRIVATE</b></div>
+              </div>
+              <div className="document-bottom"><span>NOT PUBLISHED</span><span>LOCKED ↗</span></div>
+            </article>
+            <div className="document-connector" aria-hidden="true"><span>prove + effect</span><strong>→</strong></div>
+            <article className="document-card document-after">
+              <div className="document-top"><span>DEPLOYSEAL RECEIPT</span><strong className="accent-text">PUBLIC</strong></div>
+              <div className="document-title"><span className="document-icon document-icon-check">✓</span><div><strong>{operation ? short(operation.operationId, 9) : 'operation / ready'}</strong><span>canonical outcome</span></div></div>
+              <div className="document-lines">
+                <div><span>TARGET</span><i /><b>{live ? 'AZURE ARM' : 'BOUND'}</b></div>
+                <div><span>EFFECTS</span><i /><b>{snapshot?.provider.effectCount ?? '—'} / 1</b></div>
+                <div><span>STATUS</span><i /><b>{operation?.receipt?.status || 'VERIFIABLE'}</b></div>
+                <div><span>KEY</span><i /><b>KEY VAULT</b></div>
+              </div>
+              <div className="document-bottom"><span>MIDNIGHT PREPROD</span><span className="accent-text">SIGNED ✓</span></div>
+            </article>
           </div>
         </section>
 
         <section className="signal-row landing-signal-row" aria-label="Live system status">
-          <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong></div>
-          <div><span className="signal-label">Cloud effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong></div>
-          <div><span className="signal-label">Network</span><strong>{live ? 'MIDNIGHT PREPROD' : 'LOCAL'}</strong></div>
-          <div><span className="signal-label">Status</span><strong>{operation?.status || (snapshot ? 'READY' : 'CONNECTING')}</strong></div>
+          <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong><small>committed root</small></div>
+          <div><span className="signal-label">Cloud effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong><small>one-use counter</small></div>
+          <div><span className="signal-label">Network</span><strong>{live ? 'MIDNIGHT PREPROD' : 'LOCAL'}</strong><small>{live ? 'public record' : 'development mode'}</small></div>
+          <div><span className="signal-label">Status</span><strong>{operation?.status || (snapshot ? 'READY' : 'CONNECTING')}</strong><small>release broker</small></div>
         </section>
 
-        <section className="landing-section" id="flow">
-          <div className="landing-section-heading"><div><p className="eyebrow"><span>01</span> The release flow</p><h2>One release.<br /><em>Five proofs.</em></h2></div><p>Every hand-off is bound to the same operation ID. The policy stays private; the outcome stays inspectable.</p></div>
+        <section className="landing-section" id="why">
+          <div className="landing-section-heading"><div><p className="eyebrow"><span>01</span> The case for proof</p><h2>Release with<br /><em>less exposure.</em></h2></div><p>DeploySeal gives security teams a private control plane and gives everyone else the smallest useful public fact: what was authorized, what happened, and whether it can be verified.</p></div>
+          <div className="feature-grid">
+            <article className="feature-card">
+              <span className="feature-tag">PRIVATE EVIDENCE</span>
+              <h3>Keep the dossier inside the boundary.</h3>
+              <p>Supply-chain facts, model evaluations, residency checks, and approvals prove the release without becoming the release record.</p>
+              <div className="drop-zone">
+                <span className="feature-icon">↥</span>
+                <strong>Evidence bundle</strong>
+                <span>SBOM · evaluations · approvals</span>
+                <small>Private input / never published</small>
+              </div>
+            </article>
+            <article className="feature-card">
+              <span className="feature-tag">ONE EFFECT</span>
+              <h3>Make retries safe by design.</h3>
+              <p>A response can disappear after Azure acts. The operation ID and nullifier make reconciliation boring—and a second effect impossible.</p>
+              <div className="wave-card">
+                <div className="wave-card-top"><span className="play-button">▶</span><span>Provider effect / reconciled</span><strong>{snapshot?.provider.effectCount ?? '—'}×</strong></div>
+                <div className="waveform" aria-hidden="true">{Array.from({ length: 22 }, (_, index) => <i key={index} />)}</div>
+                <div className="wave-card-bottom"><span>AZURE ARM</span><span>ONE-USE OPERATION</span></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section className="landing-section flow-section" id="flow">
+          <div className="landing-section-heading"><div><p className="eyebrow"><span>02</span> The release flow</p><h2>One release.<br /><em>Five proofs.</em></h2></div><p>Every hand-off is bound to the same operation ID. The policy stays private; the outcome stays inspectable.</p></div>
           <FlowSteps operation={operation} />
         </section>
 
         <section className="landing-split" id="proof">
-          <div><p className="eyebrow"><span>02</span> Why it matters</p><h2>Make the right<br /><em>thing visible.</em></h2><p className="landing-copy">Security teams keep the evidence. Operators get a safe retry. Auditors get a receipt they can verify without receiving the entire release dossier.</p><a className="text-link" href="/demo">Inspect the console <span aria-hidden="true">↗</span></a></div>
+          <div><p className="eyebrow"><span>03</span> Why it matters</p><h2>Make the right<br /><em>thing visible.</em></h2><p className="landing-copy">Security teams keep the evidence. Operators get a safe retry. Auditors get a receipt they can verify without receiving the entire release dossier.</p><a className="text-link" href="/demo">Inspect the console <span aria-hidden="true">↗</span></a></div>
           <div className="privacy-list">
             <div><span>01</span><div><strong>Private evidence</strong><p>SBOM, evaluation, residency, and approvals remain inside the proof boundary.</p></div></div>
             <div><span>02</span><div><strong>Single-use intent</strong><p>A Midnight nullifier binds authorization to one artifact, target, and policy epoch.</p></div></div>
@@ -307,7 +345,7 @@ function LandingPage() {
         </section>
 
         <section className="landing-record" id="public-record">
-          <div><p className="eyebrow"><span>03</span> Public record</p><h2>Follow the<br /><em>identifiers.</em></h2><p className="landing-copy">The demo gives you the public trail: Midnight Preprod transactions, the Azure resource record, and the GitHub workflow that produced the build.</p></div>
+          <div><p className="eyebrow"><span>04</span> Public record</p><h2>Follow the<br /><em>identifiers.</em></h2><p className="landing-copy">The demo gives you the public trail: Midnight Preprod transactions, the Azure resource record, and the GitHub workflow that produced the build. Private inputs stay private; durable identifiers stay useful.</p></div>
           <ExplorerLinks snapshot={snapshot} />
         </section>
       </main>

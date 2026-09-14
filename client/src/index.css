@@ -1,9 +1,10 @@
 :root {
-  --sans: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  --display: "Open Runde", "Inter Tight", "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  --body: Inter, "Helvetica Neue", Arial, sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  color: #20231e;
-  background: #f4f1e9;
-  font-family: var(--sans);
+  color: #070709;
+  background: #ffffff;
+  font-family: var(--body);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -22,9 +23,15 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  background: #ffffff;
 }
 
 button,
 input {
   font: inherit;
+}
+
+::selection {
+  color: #ffffff;
+  background: #2597d0;
 }
