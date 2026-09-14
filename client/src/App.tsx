@@ -1,4 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  Position,
+  ReactFlow,
+  useEdgesState,
+  useNodesState,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react'
 import './App.css'
 
 type Gate = {
@@ -228,6 +241,78 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
   )
 }
 
+type ArchitectureNodeData = {
+  step: string
+  title: string
+  detail: string
+  status: string
+}
+
+type ArchitectureNode = Node<ArchitectureNodeData, 'architecture'>
+
+const architectureNodes: ArchitectureNode[] = [
+  { id: 'evidence', type: 'architecture', position: { x: 0, y: 90 }, data: { step: '01', title: 'Private evidence', detail: 'SBOM · evaluations · approvals', status: 'CVM ONLY' } },
+  { id: 'proof', type: 'architecture', position: { x: 225, y: 90 }, data: { step: '02', title: 'Compact proof', detail: 'policy root + release gates', status: 'VERIFIED' } },
+  { id: 'midnight', type: 'architecture', position: { x: 450, y: 90 }, data: { step: '03', title: 'Midnight reserve', detail: 'single-use operation intent', status: 'ONE USE' } },
+  { id: 'azure', type: 'architecture', position: { x: 675, y: 90 }, data: { step: '04', title: 'Azure ARM effect', detail: 'same operation ID', status: 'DURABLE' } },
+  { id: 'recovery', type: 'architecture', position: { x: 900, y: 90 }, data: { step: '05', title: 'Reconcile response', detail: 'query, never duplicate', status: 'CRASH SAFE' } },
+  { id: 'receipt', type: 'architecture', position: { x: 1125, y: 90 }, data: { step: '06', title: 'Signed receipt', detail: 'Key Vault + public hash', status: 'PUBLIC PROOF' } },
+]
+
+const architectureEdges: Edge[] = architectureNodes.slice(0, -1).map((node, index) => ({
+  id: `${node.id}-${architectureNodes[index + 1].id}`,
+  source: node.id,
+  target: architectureNodes[index + 1].id,
+  type: 'smoothstep',
+  markerEnd: { type: MarkerType.ArrowClosed, color: '#2597d0' },
+}))
+
+function ArchitectureNode({ data }: NodeProps<ArchitectureNode>) {
+  return (
+    <div className="architecture-node">
+      <Handle className="architecture-handle" type="target" position={Position.Left} />
+      <div className="architecture-node-top"><span>{data.step}</span><i>↗</i></div>
+      <strong>{data.title}</strong>
+      <span>{data.detail}</span>
+      <small>{data.status}</small>
+      <Handle className="architecture-handle" type="source" position={Position.Right} />
+    </div>
+  )
+}
+
+const architectureNodeTypes = { architecture: ArchitectureNode }
+
+function ArchitectureDiagram({ live }: { live: boolean }) {
+  const [nodes, , onNodesChange] = useNodesState(architectureNodes)
+  const [edges, , onEdgesChange] = useEdgesState(architectureEdges)
+
+  return (
+    <div className="architecture-shell">
+      <div className="architecture-toolbar"><span>DRAG TO INSPECT</span><span>SCROLL TO ZOOM</span><strong><i /> {live ? 'LIVE TRACE' : 'SIMULATED TRACE'}</strong></div>
+      <div className="architecture-canvas">
+        <div className="architecture-boundary" aria-hidden="true"><span>TRUST BOUNDARY</span><b>PRIVATE PROOF + PUBLIC EFFECT</b></div>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={architectureNodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          fitView
+          fitViewOptions={{ padding: 0.18 }}
+          minZoom={0.45}
+          maxZoom={1.4}
+          nodesConnectable={false}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#e2e6ea" gap={22} size={1} />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+      <div className="architecture-caption"><span>Policy facts stay inside the proof boundary.</span><span>Durable identifiers leave it.</span></div>
+    </div>
+  )
+}
+
 function LandingPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
 
@@ -247,27 +332,25 @@ function LandingPage() {
         </a>
         <nav className="landing-nav" aria-label="Primary navigation">
           <a href="#why">Why DeploySeal</a>
+          <a href="#architecture">Architecture</a>
           <a href="#flow">The flow</a>
-          <a href="#public-record">Public record</a>
         </nav>
         <div className="nav-actions">
           <a className="button button-quiet nav-github" href={repositoryUrl} rel="noreferrer" target="_blank">GitHub</a>
           <a className="button button-primary nav-demo" href="/demo">Open demo <span aria-hidden="true">↗</span></a>
         </div>
-        <div className="environment"><i /> {live ? 'LIVE · AZURE ARM' : snapshot ? 'LOCAL DEMO READY' : 'CONNECTING'}</div>
       </header>
 
       <main className="landing-main">
         <section className="landing-hero">
           <div className="landing-hero-inner">
-            <p className="eyebrow hero-eyebrow"><span>DEPLOYSEAL / 00</span> Confidential release control</p>
             <h1>Private policy.<br /><em>Public proof.</em></h1>
             <p className="lede">Ship regulated software without putting the policy on display. DeploySeal turns private evidence into one authorized cloud effect and one verifiable receipt.</p>
             <div className="hero-actions">
               <a className="button button-primary" href="/demo">Run the live demo <span aria-hidden="true">↗</span></a>
               <a className="button button-quiet" href="#flow">See how it works</a>
             </div>
-            <p className="hero-micro"><span className="status-dot" /> {live ? 'Live on Midnight Preprod + Azure ARM' : snapshot ? 'Local simulator ready for the same flow' : 'Connecting to the release broker'} <span>·</span> one-use authorization</p>
+            <p className="hero-micro"><span className="status-dot" /> {live ? 'Live on Midnight Preprod + Azure ARM' : snapshot ? 'Local simulator ready for the same flow' : 'Connecting to the release broker'}</p>
           </div>
           <div className="landing-documents" aria-label="A release moving from private evidence to a public receipt">
             <article className="document-card document-before">
@@ -304,7 +387,7 @@ function LandingPage() {
         </section>
 
         <section className="landing-section" id="why">
-          <div className="landing-section-heading"><div><p className="eyebrow"><span>01</span> The case for proof</p><h2>Release with<br /><em>less exposure.</em></h2></div><p>DeploySeal gives security teams a private control plane and gives everyone else the smallest useful public fact: what was authorized, what happened, and whether it can be verified.</p></div>
+          <div className="landing-section-heading"><div><p className="eyebrow"><span>01</span> Why DeploySeal</p><h2>Release with<br /><em>less exposure.</em></h2></div><p>DeploySeal gives security teams a private control plane and gives everyone else the smallest useful public fact: what was authorized, what happened, and whether it can be verified.</p></div>
           <div className="feature-grid">
             <article className="feature-card">
               <span className="feature-tag">PRIVATE EVIDENCE</span>
@@ -330,13 +413,18 @@ function LandingPage() {
           </div>
         </section>
 
+        <section className="architecture-section" id="architecture">
+          <div className="landing-section-heading"><div><p className="eyebrow"><span>02</span> Architecture</p><h2>From private<br /><em>proof to effect.</em></h2></div><p>Six bounded steps connect confidential evidence to one cloud effect and one receipt. Move the map, zoom in, and follow the operation ID across each boundary.</p></div>
+          <ArchitectureDiagram live={live} />
+        </section>
+
         <section className="landing-section flow-section" id="flow">
-          <div className="landing-section-heading"><div><p className="eyebrow"><span>02</span> The release flow</p><h2>One release.<br /><em>Five proofs.</em></h2></div><p>Every hand-off is bound to the same operation ID. The policy stays private; the outcome stays inspectable.</p></div>
+          <div className="landing-section-heading"><div><p className="eyebrow"><span>03</span> The release flow</p><h2>One release.<br /><em>Five proofs.</em></h2></div><p>Every hand-off is bound to the same operation ID. The policy stays private; the outcome stays inspectable.</p></div>
           <FlowSteps operation={operation} />
         </section>
 
         <section className="landing-split" id="proof">
-          <div><p className="eyebrow"><span>03</span> Why it matters</p><h2>Make the right<br /><em>thing visible.</em></h2><p className="landing-copy">Security teams keep the evidence. Operators get a safe retry. Auditors get a receipt they can verify without receiving the entire release dossier.</p><a className="text-link" href="/demo">Inspect the console <span aria-hidden="true">↗</span></a></div>
+          <div><p className="eyebrow"><span>04</span> Why it matters</p><h2>Make the right<br /><em>thing visible.</em></h2><p className="landing-copy">Security teams keep the evidence. Operators get a safe retry. Auditors get a receipt they can verify without receiving the entire release dossier.</p><a className="text-link" href="/demo">Inspect the console <span aria-hidden="true">↗</span></a></div>
           <div className="privacy-list">
             <div><span>01</span><div><strong>Private evidence</strong><p>SBOM, evaluation, residency, and approvals remain inside the proof boundary.</p></div></div>
             <div><span>02</span><div><strong>Single-use intent</strong><p>A Midnight nullifier binds authorization to one artifact, target, and policy epoch.</p></div></div>
@@ -345,7 +433,7 @@ function LandingPage() {
         </section>
 
         <section className="landing-record" id="public-record">
-          <div><p className="eyebrow"><span>04</span> Public record</p><h2>Follow the<br /><em>identifiers.</em></h2><p className="landing-copy">The demo gives you the public trail: Midnight Preprod transactions, the Azure resource record, and the GitHub workflow that produced the build. Private inputs stay private; durable identifiers stay useful.</p></div>
+          <div><p className="eyebrow"><span>05</span> Explorer links</p><h2>Follow the<br /><em>identifiers.</em></h2><p className="landing-copy">The demo gives you the public trail: Midnight Preprod transactions, the Azure resource record, and the GitHub workflow that produced the build. Private inputs stay private; durable identifiers stay useful.</p></div>
           <ExplorerLinks snapshot={snapshot} />
         </section>
       </main>
@@ -476,13 +564,12 @@ function DemoPage() {
             </button>
           ))}
         </nav>
-        <div className="environment"><i /> {snapshot?.mode === 'azure-arm' ? 'AZURE ARM · SEV-SNP' : snapshot?.mode === 'aws-cloudformation' ? 'AWS CLOUDFORMATION' : 'LOCAL COMPACT SIMULATOR'}</div>
       </header>
 
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <p className="eyebrow"><span>01</span> Confidential release control</p>
+            <p className="eyebrow"><span>01</span> End-to-end release simulation</p>
             <h1>Ship the proof.<br /><em>Keep the policy.</em></h1>
             <p className="lede">
               DeploySeal verifies a release against private supply-chain, model, residency, and approval gates—then recovers the same cloud operation when the response disappears.
@@ -498,9 +585,9 @@ function DemoPage() {
             </div>
             {error && <p className="error" role="alert">{error}. Start the broker with <code>npm --prefix server run start</code>.</p>}
           </div>
-          <div className="hero-stamp" aria-label="One authorization, one effect, one receipt">
+          <div className="hero-stamp" aria-label="One intent, one effect, one receipt">
             <div className="stamp-ring"><span>ONE USE</span><strong>↗</strong><span>NO LEAK</span></div>
-            <p>One authorization<br />One provider effect<br />One receipt</p>
+            <p>One intent<br />One provider effect<br />One receipt</p>
           </div>
         </section>
 
