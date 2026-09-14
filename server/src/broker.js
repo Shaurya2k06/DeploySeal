@@ -654,7 +654,7 @@ export class DeploySealBroker {
     }
   }
 
-  async recover() {
+  async recover({ onAccepted = null } = {}) {
     return this.exclusive(async () => {
       const operation = this.currentOperation()
       if (!operation) return { accepted: false, code: 'NO_OPERATION', snapshot: this.snapshot() }
@@ -665,6 +665,7 @@ export class DeploySealBroker {
       if (!['PROOF_SUBMITTING', 'RECOVERY_REQUIRED', 'SUBMITTING', 'RECEIPT_SIGNED'].includes(operation.status)) {
         return { accepted: false, code: 'RECOVERY_NOT_ALLOWED', snapshot: this.snapshot() }
       }
+      onAccepted?.(this.snapshot())
 
       if (['PROOF_SUBMITTING', 'RECOVERY_REQUIRED'].includes(operation.status) && operation.proof?.status !== 'verified') {
         if (!this.proofVerifier) {

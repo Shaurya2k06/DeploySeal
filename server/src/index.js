@@ -205,7 +205,19 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && url.pathname === '/api/release/recover') {
-      const result = await broker.recover()
+      let resolveAccepted
+      const accepted = new Promise((resolve) => {
+        resolveAccepted = resolve
+      })
+      const running = broker.recover({
+        onAccepted: (snapshot) => resolveAccepted({ accepted: true, pending: true, code: 'RECOVERY_ACCEPTED', snapshot }),
+      })
+      const result = await Promise.race([running, accepted])
+      if (result.pending) {
+        running.catch((error) => console.error('background recovery failed', error))
+        send(response, 202, result)
+        return
+      }
       send(response, result.accepted ? 200 : 409, result)
       return
     }

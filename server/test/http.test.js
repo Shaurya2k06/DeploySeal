@@ -49,8 +49,10 @@ test('HTTP demo completes recovery and keeps the provider effect at one', async 
     assert.equal(afterStart.provider.effectCount, 1)
 
     const recover = await post('/api/release/recover')
-    assert.equal(recover.body.snapshot.operation.status, 'FINALIZED')
-    assert.equal(recover.body.snapshot.provider.effectCount, 1)
+    assert.equal(recover.status, 202)
+    assert.equal(recover.body.code, 'RECOVERY_ACCEPTED')
+    const finalized = await waitFor((snapshot) => snapshot.operation.status === 'FINALIZED')
+    assert.equal(finalized.provider.effectCount, 1)
     assert.equal((await post('/api/receipt/verify')).body.valid, true)
     const bundle = (await post('/api/receipt/export')).body.bundle
     assert.equal(typeof bundle.signature, 'string')
