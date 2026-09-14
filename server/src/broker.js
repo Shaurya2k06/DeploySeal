@@ -369,7 +369,7 @@ export class DeploySealBroker {
     return { ...proof, hash: proof.hash || proofHash }
   }
 
-  async start({ scenario = 'crash' } = {}) {
+  async start({ scenario = 'crash', onAccepted = null } = {}) {
     return this.exclusive(async () => {
       const current = this.currentOperation()
       if (current && scenario !== 'invalid' && (!FINAL_STATES.has(current.status) || process.env.DEPLOYSEAL_ALLOW_NEW_OPERATION !== 'true')) {
@@ -461,6 +461,7 @@ export class DeploySealBroker {
       }
       this.state.operations[id] = operation
       this.save()
+      onAccepted?.(this.snapshot())
 
       if (this.proofVerifier) {
         let proof

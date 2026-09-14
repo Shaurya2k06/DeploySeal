@@ -186,7 +186,20 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/release/start') {
       const body = await readJson(request)
-      const result = await broker.start({ scenario: validScenario(body?.scenario) })
+      let resolveAccepted
+      const accepted = new Promise((resolve) => {
+        resolveAccepted = resolve
+      })
+      const running = broker.start({
+        scenario: validScenario(body?.scenario),
+        onAccepted: (snapshot) => resolveAccepted({ accepted: true, pending: true, code: 'OPERATION_ACCEPTED', snapshot }),
+      })
+      const result = await Promise.race([running, accepted])
+      if (result.pending) {
+        running.catch((error) => console.error('background release failed', error))
+        send(response, 202, result)
+        return
+      }
       send(response, result.accepted || result.code === 'OPERATION_EXISTS' ? 200 : 422, result)
       return
     }
