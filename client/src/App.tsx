@@ -106,7 +106,7 @@ const emptyTimeline = [
 
 const flowSteps = [
   ['01', 'Private policy proof', 'Compact checks the private evidence bundle against the committed policy root.', 'proof'],
-  ['02', 'One-use authorization', 'Midnight reserves the operation nullifier before Azure can act.', 'reserved'],
+  ['02', 'Operation reserved', 'Midnight reserves the operation nullifier before Azure can act.', 'reserved'],
   ['03', 'Azure effect', 'ARM receives the same operation ID as its deployment name and idempotency key.', 'provider-result'],
   ['04', 'Crash-safe recovery', 'A lost response is reconciled by querying the original provider operation.', 'recovered'],
   ['05', 'Public receipt', 'Key Vault signs the outcome and Midnight finalizes the receipt hash.', 'finalized'],
@@ -382,7 +382,7 @@ function LandingPage() {
         <section className="signal-row landing-signal-row" aria-label="Live system status">
           <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong><small>committed root</small></div>
           <div><span className="signal-label">Cloud effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong><small>one-use counter</small></div>
-          <div><span className="signal-label">Network</span><strong>{live ? 'MIDNIGHT PREPROD' : 'LOCAL'}</strong><small>{live ? 'public record' : 'development mode'}</small></div>
+          <div><span className="signal-label">Network</span><strong>{live ? 'MIDNIGHT PREPROD' : 'LOCAL'}</strong><small>{live ? 'explorer links' : 'development mode'}</small></div>
           <div><span className="signal-label">Status</span><strong>{operation?.status || (snapshot ? 'READY' : 'CONNECTING')}</strong><small>release broker</small></div>
         </section>
 
