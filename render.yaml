@@ -19,3 +19,5 @@ services:
         value: 0.0.0.0
       - key: NODE_VERSION
         value: 24.11.1
+      - key: NODE_OPTIONS
+        value: --preserve-symlinks
