@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "http://deployseal-cvm-260912.eastus.cloudapp.azure.com:8787/api/:path*"
+      "destination": "https://deployseal-backend.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",
