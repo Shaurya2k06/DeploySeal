@@ -1,7 +1,7 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "DeploySeal local coordinator and broker emulator",
+  "description": "DeploySeal release coordinator and provider broker",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

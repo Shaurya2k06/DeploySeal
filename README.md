@@ -1,30 +1,44 @@
 # DeploySeal
 
-DeploySeal is a release-control console for proving a deployment policy before
-an external provider is allowed to act. The local demo and the live Azure path
-show the same recovery sequence: reserve an operation, lose the provider
-response, recover with the same idempotency token, verify the receipt, and
-reject replay.
+DeploySeal is a release-control console. A private Compact policy proof
+authorizes one provider operation, the broker recovers the same operation after
+a lost response, and a signed receipt records the result without exposing the
+policy evidence.
 
-The local broker is deliberately labeled an emulator. It does not claim a
-Midnight network transaction, Azure execution, SEV-SNP attestation, or
-production Key Vault isolation.
+## Public deployment
 
-The current public Azure demo is
-`http://deployseal-cvm-260912.eastus.cloudapp.azure.com/`. It runs on an AMD
-SEV-SNP Confidential VM with Azure Attestation, ARM resource-group tag
-reconciliation, SQLite durable state, and a Key Vault-signed receipt. The
-standard Key Vault software key is not an HSM or Secure Key Release binding;
-the public HTTP demo also has no user authentication.
+- [Landing page](https://deployseal.vercel.app/)
+- [End-to-end demo](https://deployseal.vercel.app/demo)
+- [Azure broker health](https://deployseal.vercel.app/api/health)
+- [Midnight Preprod contract](https://preprod.midnightexplorer.com/contracts/0x011e650ec7885e33e40bcb9c2393417e0dc7afff61b33ecaffcbebe59a79c6b7)
 
-## Run the demo
+The public Vercel client proxies `/api` to the Azure SEV-SNP CVM. The current
+Azure path uses MAA attestation, Azure Resource Manager, SQLite durable state,
+and an Azure Key Vault signing key. The Render blueprint is a local-emulator
+fallback; it does not claim Azure execution or a Midnight transaction.
 
-Use Node 24.11.1+ for the pinned Compact toolchain.
+The public demo is intentionally unauthenticated and the Azure VM origin is
+HTTP. Do not use it as a production control plane without adding application
+authentication and HTTPS at the origin.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `client/` | Vite/React landing page and live release console |
+| `server/` | Node broker, protocol, provider adapters, receipt verifier, and tests |
+| `contracts/deployseal/` | Compact reserve/finalize contract, generated assets, and Preprod client |
+| `ops/azure/` | Azure CVM bootstrap, attestation inspection, and live upgrade scripts |
+| `.github/workflows/` | Checks plus GitHub-attested BuildFact publication to Azure Key Vault |
+
+## Run locally
+
+Use Node `24.11.1` or newer.
 
 ```sh
-npm --prefix client install
-npm --prefix contracts/deployseal install
-npm --prefix server install
+npm ci --prefix contracts/deployseal
+npm ci --prefix server
+npm ci --prefix client
 
 # terminal 1
 npm --prefix server start
@@ -33,156 +47,91 @@ npm --prefix server start
 npm --prefix client run dev
 ```
 
-Open the Vite URL printed by the client. The default API is
-`http://127.0.0.1:8787`; set `PORT` or `VITE_API_URL` when those ports are
-already in use.
+Open the Vite URL. The local client uses `http://127.0.0.1:8787`; set
+`VITE_API_URL` if the broker runs elsewhere.
 
-## Checks
+Run the checks with:
 
 ```sh
+npm --prefix contracts/deployseal test
 npm --prefix server test
 npm --prefix client run lint
 npm --prefix client run build
-npm --prefix contracts/deployseal test
 ```
 
-## Compact contract
+## Compact and Midnight Preprod
 
-The minimal Compact vertical slice lives in
-`contracts/deployseal/src/deployseal.compact`. Install the official Compact
-tool, select the pinned toolchain, then compile it:
+The checked-in contract is
+`contracts/deployseal/src/deployseal.compact`. With the official Compact CLI:
 
 ```sh
 compact update 0.31.1
 npm --prefix contracts/deployseal run compact
 ```
 
-The Preprod client uses ledger-v8 8.1.0, MidnightJS 4.1.1, and Wallet SDK
-DUST 4.2.0. Its first full DUST sync can take a few minutes; the encrypted
-wallet snapshot under `.deployseal-midnight-level-db/` makes later runs resume
-from the latest indexed event.
-
-The contract binds a policy root, checks a private policy-root witness, binds
-the operation digest and policy epoch, inserts a one-use operation nullifier,
-and records one terminal receipt hash per operation. The checked-in server
-uses these circuits through the local Compact simulator. The same generated
-bindings also drive the MidnightJS/Preprod client.
-
-## Midnight Preprod path
-
-The contract package includes real wallet, proof-server, indexer, private-state,
-deploy, reserve, and finalize wiring. It needs a funded Preprod wallet and
-private policy inputs; keep all values in the environment or a secret manager:
+The Preprod client needs a funded wallet, private policy inputs, and a
+password-protected private-state directory. Keep all values in a secret manager
+or the shell environment:
 
 ```sh
 export DEPLOYSEAL_MIDNIGHT_SEED_HEX='...'
-# Needed by deploy/reserve/finalize; the bounded dust command does not need it.
-export DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD='Use-a-strong-Secret-9!'
+export DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD='Use-a-strong-secret'
 export DEPLOYSEAL_MIDNIGHT_DB_PATH="$PWD/.deployseal-midnight-level-db"
 export DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX='64 lowercase hex characters'
 export DEPLOYSEAL_PRIVATE_POLICY_JSON='{"maxCriticalCves":0,"maxHighCves":2,"minEvalScore":90,"minimumApprovals":2}'
 export DEPLOYSEAL_EVIDENCE_JSON='{"criticalCves":0,"highCves":1,"evalScore":97,"approvalRoles":["security","governance"]}'
+```
 
-# Run a local proof server before the wallet can submit the DUST-registration transaction.
-# docker run --rm -p 6300:6300 midnightntwrk/proof-server:8.1.0 midnight-proof-server -v
-export DEPLOYSEAL_MIDNIGHT_PROOF='http://127.0.0.1:6300'
+Set `DEPLOYSEAL_MIDNIGHT_PROOF` to a reachable proof server, then use the
+credential-gated commands:
+
+```sh
 npm --prefix contracts/deployseal run preprod -- dust
-# returns a finalized registrationTxId; DUST accrues for the designated address after confirmation
-
 npm --prefix contracts/deployseal run preprod -- deploy
 export DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS='returned contract address'
+npm --prefix contracts/deployseal run preprod -- reserve
+npm --prefix contracts/deployseal run preprod -- finalize
 ```
 
-For a release, set `DEPLOYSEAL_OPERATION_CORE_JSON` to the canonical operation
-JSON and run `preprod -- reserve`; after the provider receipt is available, set
-`DEPLOYSEAL_RECEIPT_HASH_HEX` and run `preprod -- finalize`. Both commands
-check public nullifier/receipt state first, so a lost response can be retried
-without submitting a second circuit call.
+`dust` registers eligible tNIGHT UTXOs and returns while DUST accrues on-chain.
+`reserve` and `finalize` check public state before submitting, so retrying a
+lost response does not create a second operation.
 
-The `preprod -- dust` command only syncs the address-specific tNIGHT view and
-submits the registration transaction. It intentionally avoids replaying the
-entire public DUST event history, which can exceed a local Node heap on a fresh
-wallet; DUST generation continues on-chain after the registration is finalized.
+For `reserve`, set `DEPLOYSEAL_OPERATION_CORE_JSON` to the canonical operation
+JSON. For `finalize`, also set `DEPLOYSEAL_RECEIPT_HASH_HEX` to the 32-byte
+receipt hash.
 
-To run the HTTP broker against those same Midnight private-state files, set
-`DEPLOYSEAL_PROVIDER=azure-arm`, the Azure variables below, and both
-`DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS` and `DEPLOYSEAL_MIDNIGHT_SEED_HEX`.
-The broker then uses the real reserve/finalize client; if those credentials are
-missing it refuses the real Azure path instead of falling back to the simulator.
+## Azure mode
 
-## Real Azure mode
+Set `DEPLOYSEAL_PROVIDER=azure-arm` and provide the Azure subscription,
+resource-group, target, location, Key Vault, attestation endpoint/token, and
+measurement allowlist variables described in `ops/azure/bootstrap.sh`. The
+broker requires a signed GitHub `BuildFactV1` in Azure mode. Its managed
+identity needs access only to the configured target resource group and Key
+Vault signing key.
 
-Set `DEPLOYSEAL_PROVIDER=azure-arm` to select the Azure Resource Manager
-adapter. It requires `AZURE_SUBSCRIPTION_ID`,
-`DEPLOYSEAL_AZURE_RESOURCE_GROUP`, `DEPLOYSEAL_AZURE_LOCATION`,
-`DEPLOYSEAL_AZURE_TARGET`, `AZURE_KEY_VAULT_URL`,
-`DEPLOYSEAL_AZURE_KEY_NAME`, and a signed Azure Attestation JWT in
-`DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE`. The managed identity running the
-broker needs deployment permission only in the configured target resource
-group and Key Vault sign/verify permission for the receipt key.
+The Azure adapter binds the operation ID to the ARM deployment name and tags,
+reconciles the same deployment after a lost response, verifies the attested
+SEV-SNP measurement and challenge, and signs the canonical receipt in Key
+Vault. `ops/azure/upgrade-live.sh` refreshes the live VM from `main`.
 
-The Azure adapter uses the operation ID as the ARM deployment name, applies
-operation and artifact tags to the isolated target resource group, queries
-that same deployment after a lost response, and signs the receipt digest with
-Key Vault. The recommended runtime is an AMD SEV-SNP `Standard_DC2as_v5`
-Confidential VM. Generate the attestation JWT inside that VM with Microsoft's
-`azure-guest-attest` tool; the server verifies the MAA signature, requires an
-Azure-compliant non-debuggable SEV-SNP claim, checks an allowlisted launch
-measurement and fresh challenge-bound runtime data, and binds the measurement
-to the receipt.
+`.github/workflows/deployseal-demo.yml` verifies the build attestation, signs a
+BuildFact with the configured adapter key, and publishes the fact and public
+key to Key Vault. It does not invent SBOM, model-evaluation, residency, or
+approval facts; those remain inputs from independent issuers. The optional
+EvidenceFact gate can be enabled with
+`DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS=true` once those issuers are provisioned.
 
-## Trust boundary
+## Other provider
 
-The browser never decides policy and receives only the public operation view.
-The local broker evaluates synthetic evidence and uses the checked-in Compact
-simulator; Azure mode requires a signed GitHub `BuildFactV1`, verifies the
-attestation challenge inside the CVM, reconciles ARM tags, persists through a
-SQLite lease, and signs the canonical receipt with Key Vault. Optional signed
-`EvidenceFactV1` bundles cover SBOM, model-evaluation, residency, and approval
-inputs; set `DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS=true` only when those external
-issuer keys and facts are provisioned. The public demo remains a demo, not a
-fully authenticated production control plane.
+`server/src/aws.js` contains the tested CloudFormation/KMS alternate adapter.
+It is not the active public deployment. The local broker and Compact simulator
+are useful for development and tests, but are labeled as emulation and are not
+accepted as production proof or attestation.
 
-The useful demo sequence is: **Run crash-safe demo → Recover operation →
-Receipt → Verify signature → Audit → Create scoped bundle**. The adversarial
-buttons show policy rejection before provider invocation and replay rejection
-after finalization.
-
-## Alternate AWS mode
-
-Set `DEPLOYSEAL_PROVIDER=aws-cloudformation` to select the CloudFormation
-adapter. It requires `AWS_REGION`, `DEPLOYSEAL_CF_STACK`,
-`DEPLOYSEAL_CF_CHANGE_SET`, `DEPLOYSEAL_KMS_KEY_ID`, and private
-`DEPLOYSEAL_POLICY_JSON` / `DEPLOYSEAL_EVIDENCE_JSON` supplied by a secret
-manager. The adapter reuses the operation ID as `ClientRequestToken`, queries
-the same change set, checks the artifact parameter, and binds the receipt to a
-CloudTrail event. It refuses to run without the configured Midnight proof
-client; the local Compact simulator is never accepted as a production proof
-boundary.
-
-`.github/workflows/deployseal-demo.yml` builds and verifies a GitHub-attested
-artifact, obtains a short-lived OIDC token, emits a signed `BuildFactV1`, and
-publishes the fact and its public adapter key to the Azure Key Vault used by
-the coordinator. The VM refreshes those secrets and restarts the broker when a
-new fact arrives.
-The coordinator-side OIDC/BuildFact verifier is in `server/src/github.js` and
-uses `gh attestation verify` for the Sigstore attestation boundary. Supply the
-fact through `DEPLOYSEAL_BUILD_FACT_FILE` and its separately allowlisted
-`DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY_FILE`; the workflow requires the matching
-persistent `DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY` repository secret. The server
-binds the fact's commit, repository, and artifact digest to the operation it
-creates. Generate the pair once, keep the private key only in GitHub Secrets,
-and give the public key to the coordinator:
+To verify a saved receipt bundle or SQLite state:
 
 ```sh
-openssl genpkey -algorithm ED25519 -out deployseal-build-adapter.pem
-openssl pkey -in deployseal-build-adapter.pem -pubout -out deployseal-build-adapter.pub.pem
-gh secret set DEPLOYSEAL_BUILD_ADAPTER_PRIVATE_KEY < deployseal-build-adapter.pem
-export DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY_FILE="$PWD/deployseal-build-adapter.pub.pem"
-```
-
-Verify a local receipt from the durable state without loading the broker:
-
-```sh
-npm --prefix server run verify-receipt -- /tmp/deployseal-state.json
+npm --prefix server run verify-receipt -- /path/to/receipt-bundle.json
+npm --prefix server run verify-receipt -- /path/to/state.sqlite
 ```

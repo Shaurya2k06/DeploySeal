@@ -243,7 +243,7 @@ const server = createServer(async (request, response) => {
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   server.listen(port, host, () => {
-    console.log(`DeploySeal local broker listening on http://${host}:${port}`)
+    console.log(`DeploySeal broker listening on http://${host}:${port}`)
   })
 }
 
