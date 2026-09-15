@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import AOS from 'aos'
+import 'aos/dist/aos.css'
 import {
   Background,
   Controls,
@@ -12,6 +14,8 @@ import {
   type Node,
   type NodeProps,
 } from '@xyflow/react'
+import Lenis from 'lenis'
+import 'lenis/dist/lenis.css'
 import './App.css'
 
 type Gate = {
@@ -259,18 +263,17 @@ type ArchitectureNodeData = {
   step: string
   title: string
   detail: string
-  status: string
 }
 
 type ArchitectureNode = Node<ArchitectureNodeData, 'architecture'>
 
 const architectureNodes: ArchitectureNode[] = [
-  { id: 'evidence', type: 'architecture', position: { x: 0, y: 90 }, data: { step: '01', title: 'Private evidence', detail: 'SBOM · evaluations · approvals', status: 'CVM ONLY' } },
-  { id: 'proof', type: 'architecture', position: { x: 225, y: 90 }, data: { step: '02', title: 'Compact proof', detail: 'policy root + release gates', status: 'VERIFIED' } },
-  { id: 'midnight', type: 'architecture', position: { x: 450, y: 90 }, data: { step: '03', title: 'Midnight reserve', detail: 'single-use operation intent', status: 'ONE USE' } },
-  { id: 'azure', type: 'architecture', position: { x: 675, y: 90 }, data: { step: '04', title: 'Azure ARM effect', detail: 'same operation ID', status: 'DURABLE' } },
-  { id: 'recovery', type: 'architecture', position: { x: 900, y: 90 }, data: { step: '05', title: 'Reconcile response', detail: 'query, never duplicate', status: 'CRASH SAFE' } },
-  { id: 'receipt', type: 'architecture', position: { x: 1125, y: 90 }, data: { step: '06', title: 'Signed receipt', detail: 'Key Vault + public hash', status: 'PUBLIC PROOF' } },
+  { id: 'evidence', type: 'architecture', position: { x: 0, y: 90 }, data: { step: '01', title: 'Private evidence', detail: 'SBOM · evaluations · approvals' } },
+  { id: 'proof', type: 'architecture', position: { x: 225, y: 90 }, data: { step: '02', title: 'Compact proof', detail: 'policy root + release gates' } },
+  { id: 'midnight', type: 'architecture', position: { x: 450, y: 90 }, data: { step: '03', title: 'Midnight reserve', detail: 'single-use operation intent' } },
+  { id: 'azure', type: 'architecture', position: { x: 675, y: 90 }, data: { step: '04', title: 'Azure ARM effect', detail: 'same operation ID' } },
+  { id: 'recovery', type: 'architecture', position: { x: 900, y: 90 }, data: { step: '05', title: 'Reconcile response', detail: 'query, never duplicate' } },
+  { id: 'receipt', type: 'architecture', position: { x: 1125, y: 90 }, data: { step: '06', title: 'Signed receipt', detail: 'Key Vault + public hash' } },
 ]
 
 const architectureEdges: Edge[] = architectureNodes.slice(0, -1).map((node, index) => ({
@@ -288,7 +291,6 @@ function ArchitectureNode({ data }: NodeProps<ArchitectureNode>) {
       <div className="architecture-node-top"><span>{data.step}</span><i>↗</i></div>
       <strong>{data.title}</strong>
       <span>{data.detail}</span>
-      <small>{data.status}</small>
       <Handle className="architecture-handle" type="source" position={Position.Right} />
     </div>
   )
@@ -304,7 +306,6 @@ function ArchitectureDiagram({ live }: { live: boolean }) {
     <div className="architecture-shell">
       <div className="architecture-toolbar"><span>DRAG TO INSPECT</span><span>SCROLL TO ZOOM</span><strong><i /> {live ? 'LIVE TRACE' : 'SIMULATED TRACE'}</strong></div>
       <div className="architecture-canvas">
-        <div className="architecture-boundary" aria-hidden="true"><span>TRUST BOUNDARY</span><b>PRIVATE PROOF + PUBLIC EFFECT</b></div>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -322,13 +323,37 @@ function ArchitectureDiagram({ live }: { live: boolean }) {
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
-      <div className="architecture-caption"><span>Policy facts stay inside the proof boundary.</span><span>Durable identifiers leave it.</span></div>
     </div>
   )
 }
 
 function LandingPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+
+  useEffect(() => {
+    AOS.init({
+      disable: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      duration: 650,
+      easing: 'ease-out-cubic',
+      offset: 64,
+      once: true,
+    })
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const lenis = new Lenis({ lerp: 0.08, smoothWheel: true })
+    let frame = 0
+    const raf = (time: number) => {
+      lenis.raf(time)
+      frame = window.requestAnimationFrame(raf)
+    }
+    frame = window.requestAnimationFrame(raf)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      lenis.destroy()
+    }
+  }, [])
 
   useEffect(() => {
     request<Snapshot>('/api/release').then(setSnapshot).catch(() => undefined)
@@ -356,7 +381,7 @@ function LandingPage() {
       </header>
 
       <main className="landing-main">
-        <section className="landing-hero">
+        <section className="landing-hero" data-aos="fade-up">
           <div className="landing-hero-inner">
             <h1>Private policy.<br /><em>Public proof.</em></h1>
             <p className="lede">Ship regulated software without putting the policy on display. DeploySeal turns private evidence into one authorized cloud effect and one verifiable receipt.</p>
@@ -366,7 +391,7 @@ function LandingPage() {
             </div>
             <p className="hero-micro"><span className="status-dot" /> {live ? 'Live on Midnight Preprod + Azure ARM' : snapshot ? 'Local simulator ready for the same flow' : 'Connecting to the release broker'}</p>
           </div>
-          <div className="landing-documents" aria-label="A release moving from private evidence to a public receipt">
+          <div className="landing-documents" data-aos="fade-up" data-aos-delay="100" aria-label="A release moving from private evidence to a public receipt">
             <article className="document-card document-before">
               <div className="document-top"><span>RELEASE DOSSIER</span><strong>PRIVATE</strong></div>
               <div className="document-title"><span className="document-icon">◌</span><div><strong>build / 2026.09</strong><span>evidence bundle</span></div></div>
@@ -393,7 +418,7 @@ function LandingPage() {
           </div>
         </section>
 
-        <section className="signal-row landing-signal-row" aria-label="Live system status">
+        <section className="signal-row landing-signal-row" data-aos="fade-up" data-aos-delay="150" aria-label="Live system status">
           <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong><small>committed root</small></div>
           <div><span className="signal-label">Cloud effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong><small>one-use counter</small></div>
           <div><span className="signal-label">Network</span><strong>{live ? 'MIDNIGHT PREPROD' : 'LOCAL'}</strong><small>{live ? 'explorer links' : 'development mode'}</small></div>
@@ -401,10 +426,9 @@ function LandingPage() {
         </section>
 
         <section className="landing-section" id="why">
-          <div className="landing-section-heading"><div><p className="eyebrow"><span>01</span> Why DeploySeal</p><h2>Release with<br /><em>less exposure.</em></h2></div><p>DeploySeal gives security teams a private control plane and gives everyone else the smallest useful public fact: what was authorized, what happened, and whether it can be verified.</p></div>
-          <div className="feature-grid">
+          <div className="landing-section-heading" data-aos="fade-up"><div><h2>Release with<br /><em>less exposure.</em></h2></div><p>DeploySeal gives security teams a private control plane and gives everyone else the smallest useful public fact: what was authorized, what happened, and whether it can be verified.</p></div>
+          <div className="feature-grid" data-aos="fade-up" data-aos-delay="100">
             <article className="feature-card">
-              <span className="feature-tag">PRIVATE EVIDENCE</span>
               <h3>Keep the dossier inside the boundary.</h3>
               <p>Supply-chain facts, model evaluations, residency checks, and approvals prove the release without becoming the release record.</p>
               <div className="drop-zone">
@@ -415,7 +439,6 @@ function LandingPage() {
               </div>
             </article>
             <article className="feature-card">
-              <span className="feature-tag">ONE EFFECT</span>
               <h3>Make retries safe by design.</h3>
               <p>A response can disappear after Azure acts. The operation ID and nullifier make reconciliation boring—and a second effect impossible.</p>
               <div className="wave-card">
@@ -428,17 +451,17 @@ function LandingPage() {
         </section>
 
         <section className="architecture-section" id="architecture">
-          <div className="landing-section-heading"><div><p className="eyebrow"><span>02</span> Architecture</p><h2>From private<br /><em>proof to effect.</em></h2></div><p>Six bounded steps connect confidential evidence to one cloud effect and one receipt. Move the map, zoom in, and follow the operation ID across each boundary.</p></div>
-          <ArchitectureDiagram live={live} />
+          <div className="landing-section-heading" data-aos="fade-up"><div><h2>From private<br /><em>proof to effect.</em></h2></div><p>Six bounded steps connect confidential evidence to one cloud effect and one receipt. Move the map, zoom in, and follow the operation ID across each boundary.</p></div>
+          <div data-aos="fade-up" data-aos-delay="100"><ArchitectureDiagram live={live} /></div>
         </section>
 
         <section className="landing-section flow-section" id="flow">
-          <div className="landing-section-heading"><div><p className="eyebrow"><span>03</span> The release flow</p><h2>One release.<br /><em>Five proofs.</em></h2></div><p>Every hand-off is bound to the same operation ID. The policy stays private; the outcome stays inspectable.</p></div>
-          <FlowSteps operation={operation} />
+          <div className="landing-section-heading" data-aos="fade-up"><div><h2>One release.<br /><em>Five proofs.</em></h2></div><p>Every hand-off is bound to the same operation ID. The policy stays private; the outcome stays inspectable.</p></div>
+          <div data-aos="fade-up" data-aos-delay="100"><FlowSteps operation={operation} /></div>
         </section>
 
-        <section className="landing-split" id="proof">
-          <div><p className="eyebrow"><span>04</span> Why it matters</p><h2>Make the right<br /><em>thing visible.</em></h2><p className="landing-copy">Security teams keep the evidence. Operators get a safe retry. Auditors get a receipt they can verify without receiving the entire release dossier.</p><a className="text-link" href="/demo">Inspect the console <span aria-hidden="true">↗</span></a></div>
+        <section className="landing-split" id="proof" data-aos="fade-up">
+          <div><h2>Make the right<br /><em>thing visible.</em></h2><p className="landing-copy">Security teams keep the evidence. Operators get a safe retry. Auditors get a receipt they can verify without receiving the entire release dossier.</p><a className="text-link" href="/demo">Inspect the console <span aria-hidden="true">↗</span></a></div>
           <div className="privacy-list">
             <div><span>01</span><div><strong>Private evidence</strong><p>SBOM, evaluation, residency, and approvals remain inside the proof boundary.</p></div></div>
             <div><span>02</span><div><strong>Single-use intent</strong><p>A Midnight nullifier binds authorization to one artifact, target, and policy epoch.</p></div></div>
@@ -446,8 +469,8 @@ function LandingPage() {
           </div>
         </section>
 
-        <section className="landing-record" id="public-record">
-          <div><p className="eyebrow"><span>05</span> Explorer links</p><h2>Follow the<br /><em>identifiers.</em></h2><p className="landing-copy">The demo gives you the public trail: Midnight Preprod transactions, the Azure resource record, and the GitHub workflow that produced the build. Private inputs stay private; durable identifiers stay useful.</p></div>
+        <section className="landing-record" id="public-record" data-aos="fade-up">
+          <div><h2>Follow the<br /><em>identifiers.</em></h2><p className="landing-copy">The demo gives you the public trail: Midnight Preprod transactions, the Azure resource record, and the GitHub workflow that produced the build. Private inputs stay private; durable identifiers stay useful.</p></div>
           <ExplorerLinks snapshot={snapshot} />
         </section>
       </main>
