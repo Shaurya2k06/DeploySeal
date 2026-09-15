@@ -260,14 +260,29 @@ async function walletContext({ seedHex = required('DEPLOYSEAL_MIDNIGHT_SEED_HEX'
     shieldedSecretKeys,
     dustSecretKey,
     unshieldedKeystore,
+    checkpointing: false,
     async stop() {
+      if (context.checkpointTimer) clearInterval(context.checkpointTimer)
       try {
-        if (syncDust) await writeDustState(await wallet.dust.serializeState())
+        await context.checkpoint()
       } finally {
         await wallet.stop()
       }
     },
+    async checkpoint() {
+      if (!syncDust || context.checkpointing) return
+      context.checkpointing = true
+      try {
+        await writeDustState(await wallet.dust.serializeState())
+      } catch (error) {
+        console.error('DUST wallet checkpoint failed', error)
+      } finally {
+        context.checkpointing = false
+      }
+    },
   }
+  context.checkpointTimer = syncDust ? setInterval(() => void context.checkpoint(), 60_000) : null
+  context.checkpointTimer?.unref?.()
   await context.wallet.unshielded.start()
   if (syncDust) await context.wallet.dust.start(dustSecretKey)
   await context.wallet.pendingTransactionsService.start()

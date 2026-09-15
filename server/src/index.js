@@ -305,8 +305,13 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   })
 }
 
-server.on('close', () => {
-  void midnightClientPromise?.then((client) => client.close())
-})
+async function shutdown() {
+  await new Promise((resolve) => server.close(resolve))
+  await midnightClientPromise?.then((client) => client.close())
+  process.exit(0)
+}
+
+process.once('SIGTERM', shutdown)
+process.once('SIGINT', shutdown)
 
 export { server, broker }
