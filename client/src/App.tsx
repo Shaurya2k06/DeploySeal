@@ -581,30 +581,6 @@ function DemoPage() {
       </header>
 
       <main id="top">
-        <section className="hero">
-          <div className="hero-copy">
-            <p className="eyebrow"><span>01</span> End-to-end release simulation</p>
-            <h1>Ship the proof.<br /><em>Keep the policy.</em></h1>
-            <p className="lede">
-              DeploySeal verifies a release against private supply-chain, model, residency, and approval gates—then recovers the same cloud operation when the response disappears.
-            </p>
-            <div className="hero-actions">
-              <button className="button button-primary" disabled={Boolean(busy)} onClick={primaryAction} type="button">
-                {busy ? 'Working…' : isRecoverable ? 'Continue demo' : isFinal ? snapshot?.mode === 'azure-arm' ? 'Run next operation' : 'Reset demo' : 'Begin demo'}
-                <span aria-hidden="true">↗</span>
-              </button>
-              <button className="button button-quiet" disabled={Boolean(busy) || Boolean(operation && !(isFinal && snapshot?.mode === 'azure-arm'))} onClick={() => run('/api/release/start', { scenario: 'happy' })} type="button">
-                Run clean path
-              </button>
-            </div>
-            {error && <p className="error" role="alert">{error}. Start the broker with <code>npm --prefix server run start</code>.</p>}
-          </div>
-          <div className="hero-stamp" aria-label="One intent, one effect, one receipt">
-            <div className="stamp-ring"><span>ONE USE</span><strong>↗</strong><span>NO LEAK</span></div>
-            <p>One intent<br />One provider effect<br />One receipt</p>
-          </div>
-        </section>
-
         <section className="signal-row" aria-label="System status">
           <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong></div>
           <div><span className="signal-label">Provider effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong></div>
@@ -615,6 +591,16 @@ function DemoPage() {
         <section className="demo-flow-section">
           <div className="section-heading"><div><p className="eyebrow"><span>02</span> End-to-end trace</p><h2>Follow one operation.</h2></div><span className="tag">PUBLIC IDENTIFIERS</span></div>
           <p className="demo-flow-copy">Start the crash-safe path to watch private policy proof, single-use authorization, Azure effect, recovery, and receipt finalization move together.</p>
+          <div className="hero-actions demo-controls">
+            <button className="button button-primary" disabled={Boolean(busy)} onClick={primaryAction} type="button">
+              {busy ? 'Working…' : isRecoverable ? 'Continue demo' : isFinal ? snapshot?.mode === 'azure-arm' ? 'Run next operation' : 'Reset demo' : 'Begin demo'}
+              <span aria-hidden="true">↗</span>
+            </button>
+            <button className="button button-quiet" disabled={Boolean(busy) || Boolean(operation && !(isFinal && snapshot?.mode === 'azure-arm'))} onClick={() => run('/api/release/start', { scenario: 'happy' })} type="button">
+              Run clean path
+            </button>
+          </div>
+          {error && <p className="error" role="alert">{error}. Start the broker with <code>npm --prefix server run start</code>.</p>}
           <FlowSteps operation={operation} />
           <ExplorerLinks detailed snapshot={snapshot} />
           <TransactionReceipts operation={operation} />
@@ -719,7 +705,6 @@ function DemoPage() {
           {snapshot?.lastAttempt && <div className="attempt-result"><span>Last attempt</span><strong>{snapshot.lastAttempt.code.replaceAll('_', ' ')}</strong><small>{time(snapshot.lastAttempt.at)}</small></div>}
         </section>
       </main>
-      <footer><span>DEPLOYSEAL / PRIVATE RELEASE CONTROL</span><span>Built for a world where the response can disappear.</span></footer>
     </div>
   )
 }

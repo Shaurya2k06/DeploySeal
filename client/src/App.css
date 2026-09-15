@@ -1281,6 +1281,10 @@ code {
   font: 15px/1.5 var(--body);
 }
 
+.demo-controls {
+  margin-top: 22px;
+}
+
 .demo-flow-section .flow-steps {
   margin-top: 30px;
 }
