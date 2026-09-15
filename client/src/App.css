@@ -37,6 +37,9 @@
 }
 
 .landing-topbar {
+  position: sticky;
+  top: 16px;
+  width: calc(100% - 32px);
   max-width: 1160px;
   padding-right: 20px;
   padding-left: 20px;
