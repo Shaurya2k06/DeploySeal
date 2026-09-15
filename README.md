@@ -158,6 +158,12 @@ independent issuers and published as `evidence-facts-json` plus
 `evidence-adapter-public-key`. The broker refuses to start without that
 bundle.
 
+For the live demo environment only, `node ops/azure/demo-evidence.js` creates
+separate non-exportable Azure Key Vault issuer keys and signs facts from the
+checked-in lockfiles, passing release checks, the live Azure region, and the
+authenticated operator sessions. These operator-demo approval keys are not a
+replacement for independent security and governance issuers in production.
+
 ## Other provider
 
 `server/src/aws.js` remains a real alternate CloudFormation/KMS adapter for
