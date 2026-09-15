@@ -239,8 +239,8 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
 }
 
 function TransactionReceipts({ operation }: { operation: Operation | null }) {
-  const reserveReceipt = operation?.proof?.txHash
-  const finalizeReceipt = operation?.finalizationTxHash
+  const reserveReceipt = operation?.proof?.txHash || operation?.proof?.txId
+  const finalizeReceipt = operation?.finalizationTxHash || operation?.finalizationTxId
   const receipts = [
     reserveReceipt ? ['Reserve transaction', reserveReceipt] : null,
     finalizeReceipt ? ['Finalize transaction', finalizeReceipt] : null,
