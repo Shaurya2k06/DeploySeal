@@ -16,9 +16,15 @@ The public Vercel client proxies `/api` to the Azure SEV-SNP CVM. The Azure
 path uses MAA attestation, Azure Resource Manager, SQLite durable state, a
 Midnight Preprod contract, and an Azure Key Vault signing key.
 
-The public demo is intentionally unauthenticated and the Azure VM origin is
-HTTP. Do not use it as a production control plane without adding application
-authentication and HTTPS at the origin.
+The checked-in broker supports bearer authentication and direct HTTPS when
+`DEPLOYSEAL_API_TOKEN`, `DEPLOYSEAL_REQUIRE_AUTH=true`,
+`DEPLOYSEAL_REQUIRE_TLS=true`, `DEPLOYSEAL_TLS_KEY_FILE`, and
+`DEPLOYSEAL_TLS_CERT_FILE` are configured. The public showcase is still
+unauthenticated and uses the existing HTTP Azure origin until those external
+credentials and certificates are provisioned.
+
+If a trusted reverse proxy terminates TLS before Node, set
+`DEPLOYSEAL_TLS_TERMINATED=true` and keep the proxy-to-broker hop private.
 
 ## Repository layout
 
@@ -28,6 +34,7 @@ authentication and HTTPS at the origin.
 | `server/` | Node broker, protocol, provider adapters, receipt verifier, and tests |
 | `contracts/deployseal/` | Compact reserve/finalize contract, generated assets, and Preprod client |
 | `ops/azure/` | Azure CVM bootstrap, attestation inspection, and live upgrade scripts |
+| `ops/aws/` | AWS systemd unit, secret loader, and deployment checklist |
 | `.github/workflows/` | Checks plus GitHub-attested BuildFact publication to Azure Key Vault |
 
 ## Run locally
@@ -83,6 +90,10 @@ export DEPLOYSEAL_PRIVATE_POLICY_JSON='{"maxCriticalCves":0,"maxHighCves":2,"min
 export DEPLOYSEAL_EVIDENCE_JSON='{"criticalCves":0,"highCves":1,"evalScore":97,"approvalRoles":["security","governance"]}'
 ```
 
+Provider mode also requires a signed `EvidenceFactV1` bundle and trusted
+issuer key in `DEPLOYSEAL_EVIDENCE_FACTS_JSON` and
+`DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY`.
+
 Set `DEPLOYSEAL_MIDNIGHT_PROOF` to a reachable proof server, then use the
 credential-gated commands:
 
@@ -119,27 +130,29 @@ Vault. `ops/azure/upgrade-live.sh` refreshes the live VM from `main`.
 `.github/workflows/deployseal-demo.yml` verifies the build attestation, signs a
 BuildFact with the configured adapter key, and publishes the fact and public
 key to Key Vault. It does not invent SBOM, model-evaluation, residency, or
-approval facts; those remain inputs from independent issuers. The optional
-EvidenceFact gate can be enabled with
-`DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS=true` once those issuers are provisioned.
+approval facts; those must be signed by independent issuers and published as
+`evidence-facts-json` plus `evidence-adapter-public-key`. The broker refuses to
+start without that bundle.
 
 ## Other provider
 
-`server/src/aws.js` contains the tested CloudFormation/KMS alternate adapter.
-It is not the active public deployment. AWS mode still requires the real
-Midnight contract, a signed BuildFact, provider evidence, and an explicitly
-configured `DEPLOYSEAL_ENCLAVE_MEASUREMENT`.
+`server/src/aws.js` contains the CloudFormation/KMS adapter, and `ops/aws/`
+contains its systemd unit, secret loader, and deployment checklist. AWS mode
+still requires the real Midnight contract, signed BuildFact and EvidenceFact
+bundles, CloudFormation change set, CloudTrail access, KMS key, and an
+explicitly configured `DEPLOYSEAL_ENCLAVE_MEASUREMENT`.
 
 ## Pending implementation
 
-- Independent EvidenceFact issuers for SBOM, model evaluation, residency, and
-  approvals. Until those issuers are connected, the operator must supply the
-  release evidence inputs through `DEPLOYSEAL_EVIDENCE_JSON`; the optional
-  EvidenceFact bundle can be enforced with `DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS=true`.
-- Authentication and HTTPS at the public broker origin. The demo remains an
-  intentionally unauthenticated showcase.
-- Live AWS deployment and operations wiring; the adapter and unit coverage
-  exist, but Azure is the only public deployment.
+- Independent production issuers still need to generate and publish the SBOM,
+  model-evaluation, residency, and approval EvidenceFacts. The broker now
+  rejects operator-only evidence without their signed bundle.
+- Public rollout still needs a real auth gateway/token and TLS certificate
+  installation. The code path is present; the public showcase remains open
+  until those external credentials are provisioned.
+- AWS account-side rollout still needs the target stack/change set, IAM role,
+  KMS key, secret files, enclave measurement, and certificates. The tracked
+  `ops/aws/` unit and loader cover the application side.
 
 To verify a saved receipt bundle or SQLite state:
 

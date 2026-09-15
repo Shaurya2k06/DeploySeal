@@ -6,13 +6,15 @@ import { dirname } from 'node:path'
 import { ApiPromise, WsProvider } from '@polkadot/api'
 import { CompiledContract } from '@midnight-ntwrk/compact-js'
 import { DeploySeal, witnesses } from './index.js'
+import { ContractState } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime'
 import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js/network-id'
-import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js/contracts'
+import { deployContract, findDeployedContract, submitCallTxAsync } from '@midnight-ntwrk/midnight-js/contracts'
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider'
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider'
 import { StorageEncryption, levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider'
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider'
 import { validatePassword } from '@midnight-ntwrk/midnight-js-utils'
+import { SucceedEntirely } from '@midnight-ntwrk/midnight-js-types'
 import { WalletFacade } from '@midnightntwrk/wallet-sdk-facade'
 import { DustWallet } from '@midnightntwrk/wallet-sdk-dust-wallet'
 import { HDWallet, Roles } from '@midnightntwrk/wallet-sdk-hd'
@@ -323,17 +325,121 @@ function bytesEqual(left, right) {
   return Boolean(left) && Buffer.from(left).equals(Buffer.from(right))
 }
 
+function withTimeout(promise, message, timeoutMs = 120_000) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+function decodeContractState(value) {
+  const hex = typeof value === 'string' && value.startsWith('0x') ? value.slice(2) : value
+  if (typeof hex !== 'string' || !/^[0-9a-f]+$/iu.test(hex)) return null
+  try {
+    return DeploySeal.ledger(ContractState.deserialize(Buffer.from(hex, 'hex')))
+  } catch {
+    return null
+  }
+}
+
+async function latestContractTransaction(contractAddress, entryPoint, stateMatches) {
+  const query = `
+    query LatestContractAction($address: HexEncoded!) {
+      contractAction(address: $address) {
+        state
+        ... on ContractCall {
+          entryPoint
+        }
+        transaction {
+          hash
+          ... on RegularTransaction {
+            identifiers
+          }
+        }
+      }
+    }
+  `
+  try {
+    const response = await fetch(endpoints.indexer, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables: { address: contractAddress } }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) return null
+    const payload = await response.json()
+    const action = payload?.data?.contractAction
+    const transaction = action?.transaction
+    if (payload?.errors || action?.entryPoint !== entryPoint || !stateMatches(decodeContractState(action.state))) return null
+    if (typeof transaction?.hash !== 'string') return null
+    return {
+      txId: Array.isArray(transaction.identifiers) ? transaction.identifiers[0] || null : null,
+      txHash: transaction.hash,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function finalizedTransaction(publicDataProvider, txId) {
+  if (!txId) return null
+  try {
+    return await withTimeout(publicDataProvider.watchForTxData(txId), 'Midnight transaction lookup timed out', 10_000)
+  } catch {
+    return null
+  }
+}
+
+function requireReceipt(circuitId, transaction) {
+  if (!transaction?.txHash) throw new Error(`Midnight ${circuitId} state changed but its transaction receipt could not be recovered`)
+  return transaction
+}
+
 export async function createMidnightClient({
   contractAddress = required('DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS'),
   seedHex = required('DEPLOYSEAL_MIDNIGHT_SEED_HEX'),
 } = {}) {
   const context = await walletContext({ seedHex })
   const networkProviders = await providers(context)
-  const deployed = await findDeployedContract(networkProviders, {
+  await findDeployedContract(networkProviders, {
     contractAddress,
     compiledContract: compiled,
     privateStateId,
   })
+
+  async function submitCircuit(circuitId, args) {
+    const submitted = await submitCallTxAsync(networkProviders, {
+      compiledContract: compiled,
+      circuitId,
+      contractAddress,
+      privateStateId,
+      args,
+    })
+    try {
+      const finalized = await withTimeout(
+        networkProviders.publicDataProvider.watchForTxData(submitted.txId),
+        `Midnight ${circuitId} transaction finalization timed out`,
+      )
+      if (finalized.status !== SucceedEntirely) {
+        throw Object.assign(new Error(`Midnight ${circuitId} transaction was not accepted`), { finalized })
+      }
+      await networkProviders.privateStateProvider.set(privateStateId, submitted.callTxData.private.nextPrivateState)
+      return { txId: finalized.txId, txHash: finalized.txHash }
+    } catch (cause) {
+      throw Object.assign(cause instanceof Error ? cause : new Error(String(cause)), {
+        submitted,
+        finalized: cause?.finalized || cause?.finalizedTxData || null,
+      })
+    }
+  }
+
+  async function restoreSubmittedState(submitted) {
+    const nextPrivateState = submitted?.callTxData?.private?.nextPrivateState
+    if (nextPrivateState) await networkProviders.privateStateProvider.set(privateStateId, nextPrivateState)
+  }
 
   async function reserve(core, expectedPolicyRoot) {
     const nullifier = operationNullifier(core)
@@ -345,27 +451,30 @@ export async function createMidnightClient({
       if (!bytesEqual(before.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
         throw new Error('Midnight operation nullifier is bound to a different operation digest')
       }
+      const recovered = requireReceipt('reserve', await latestContractTransaction(contractAddress, 'reserve', (state) => Boolean(
+        state && state.operationNullifiers.member(nullifier) && bytesEqual(state.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex')),
+      )))
       return {
         status: 'verified',
         kind: 'midnight-preprod',
         policyRoot: Buffer.from(before.policyRoot).toString('hex'),
         nullifier: nullifier.toString('hex'),
         operationId: operationId(core),
-        txId: null,
-        txHash: null,
+        txId: recovered?.txId || null,
+        txHash: recovered?.txHash || null,
         recovered: true,
       }
     }
     try {
-      const tx = await deployed.callTx.reserve(before.policyRoot, nullifier, Buffer.from(operationId(core), 'hex'), BigInt(core.policyEpoch))
+      const tx = await submitCircuit('reserve', [before.policyRoot, nullifier, Buffer.from(operationId(core), 'hex'), BigInt(core.policyEpoch)])
       return {
         status: 'verified',
         kind: 'midnight-preprod',
         policyRoot: Buffer.from(before.policyRoot).toString('hex'),
         nullifier: nullifier.toString('hex'),
         operationId: operationId(core),
-        txId: tx.public.txId,
-        txHash: tx.public.txHash,
+        txId: tx.txId,
+        txHash: tx.txHash,
       }
     } catch (cause) {
       const after = await contractState(networkProviders, contractAddress)
@@ -373,14 +482,19 @@ export async function createMidnightClient({
       if (!bytesEqual(after.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
         throw new Error('Midnight operation nullifier is bound to a different operation digest')
       }
+      const finalized = await finalizedTransaction(networkProviders.publicDataProvider, cause.submitted?.txId)
+      const recovered = requireReceipt('reserve', finalized || cause.finalized || await latestContractTransaction(contractAddress, 'reserve', (state) => Boolean(
+        state && state.operationNullifiers.member(nullifier) && bytesEqual(state.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex')),
+      )))
+      await restoreSubmittedState(cause.submitted)
       return {
         status: 'verified',
         kind: 'midnight-preprod',
         policyRoot: Buffer.from(after.policyRoot).toString('hex'),
         nullifier: nullifier.toString('hex'),
         operationId: operationId(core),
-        txId: null,
-        txHash: null,
+        txId: recovered.txId || cause.finalized?.txId || null,
+        txHash: recovered.txHash,
         recovered: true,
       }
     }
@@ -397,18 +511,33 @@ export async function createMidnightClient({
       if (!bytesEqual(before.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex'))) {
         throw new Error('Midnight operation was finalized with a different receipt hash')
       }
-      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, txHash: null, recovered: true }
+      const recovered = requireReceipt('finalize', await latestContractTransaction(contractAddress, 'finalize', (state) => Boolean(
+        state && state.finalizedNullifiers.member(nullifier) && bytesEqual(state.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex')),
+      )))
+      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: recovered.txId || null, txHash: recovered.txHash, recovered: true }
     }
     try {
-      const tx = await deployed.callTx.finalize(nullifier, Buffer.from(receiptHash, 'hex'))
-      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: tx.public.txId, txHash: tx.public.txHash }
+      const tx = await submitCircuit('finalize', [nullifier, Buffer.from(receiptHash, 'hex')])
+      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: tx.txId, txHash: tx.txHash }
     } catch (cause) {
       const after = await contractState(networkProviders, contractAddress)
       if (!after.finalizedNullifiers.member(nullifier)) throw cause
       if (!bytesEqual(after.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex'))) {
         throw new Error('Midnight operation was finalized with a different receipt hash')
       }
-      return { status: 'verified', kind: 'midnight-preprod', operationId: operationId(core), txId: null, txHash: null, recovered: true }
+      const finalized = await finalizedTransaction(networkProviders.publicDataProvider, cause.submitted?.txId)
+      const recovered = requireReceipt('finalize', finalized || cause.finalized || await latestContractTransaction(contractAddress, 'finalize', (state) => Boolean(
+        state && state.finalizedNullifiers.member(nullifier) && bytesEqual(state.receiptHashesByOperation.lookup(nullifier), Buffer.from(receiptHash, 'hex')),
+      )))
+      await restoreSubmittedState(cause.submitted)
+      return {
+        status: 'verified',
+        kind: 'midnight-preprod',
+        operationId: operationId(core),
+        txId: recovered.txId || cause.finalized?.txId || null,
+        txHash: recovered.txHash,
+        recovered: true,
+      }
     }
   }
 
@@ -451,7 +580,10 @@ async function main() {
         if (!bytesEqual(state.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex'))) {
           throw new Error('operation nullifier is bound to a different operation digest')
         }
-        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, txHash: null, circuit: 'reserve', recovered: true }))
+        const recovered = requireReceipt('reserve', await latestContractTransaction(contractAddress, 'reserve', (current) => Boolean(
+          current && current.operationNullifiers.member(nullifier) && bytesEqual(current.operationDigests.lookup(nullifier), Buffer.from(operationId(core), 'hex')),
+        )))
+        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: recovered.txId, txHash: recovered.txHash, circuit: 'reserve', recovered: true }))
         return
       }
       const root = state.policyRoot
@@ -466,7 +598,10 @@ async function main() {
       const state = await contractState(networkProviders, contractAddress)
       if (state.finalizedNullifiers.member(nullifier)) {
         if (!bytesEqual(state.receiptHashesByOperation.lookup(nullifier), receiptHash)) throw new Error('operation was finalized with a different receipt hash')
-        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: null, txHash: null, circuit: 'finalize', recovered: true }))
+        const recovered = requireReceipt('finalize', await latestContractTransaction(contractAddress, 'finalize', (current) => Boolean(
+          current && current.finalizedNullifiers.member(nullifier) && bytesEqual(current.receiptHashesByOperation.lookup(nullifier), receiptHash),
+        )))
+        console.log(JSON.stringify({ network, contractAddress, operationId: operationId(core), txId: recovered.txId, txHash: recovered.txHash, circuit: 'finalize', recovered: true }))
         return
       }
       const tx = await deployed.callTx.finalize(nullifier, receiptHash)

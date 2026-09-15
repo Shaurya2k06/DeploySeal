@@ -23,4 +23,4 @@ for (const [name, variable] of Object.entries(secrets)) {
 const { server } = await import('./index.js')
 const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
-server.listen(port, host, () => console.log(`DeploySeal Azure broker listening on http://${host}:${port}`))
+server.listen(port, host, () => console.log(`DeploySeal Azure broker listening on ${process.env.DEPLOYSEAL_TLS_CERT_FILE ? 'https' : 'http'}://${host}:${port}`))

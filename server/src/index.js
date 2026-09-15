@@ -1,5 +1,6 @@
-import { createServer } from 'node:http'
-import { createPublicKey } from 'node:crypto'
+import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpsServer } from 'node:https'
+import { createPublicKey, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { AwsCloudFormationProvider, AwsKmsReceiptSigner } from './aws.js'
 import { AzureArmProvider, AzureKeyVaultReceiptSigner, AzureTeeAttestation } from './azure.js'
@@ -12,6 +13,12 @@ const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
 const useAws = process.env.DEPLOYSEAL_PROVIDER === 'aws-cloudformation'
 const useAzure = process.env.DEPLOYSEAL_PROVIDER === 'azure-arm'
+const clientOrigin = process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5173'
+const apiToken = process.env.DEPLOYSEAL_API_TOKEN || null
+const requireAuth = Boolean(apiToken) || process.env.DEPLOYSEAL_REQUIRE_AUTH === 'true' || process.env.NODE_ENV === 'production'
+const tlsKeyFile = process.env.DEPLOYSEAL_TLS_KEY_FILE
+const tlsCertFile = process.env.DEPLOYSEAL_TLS_CERT_FILE
+const requireTls = process.env.DEPLOYSEAL_REQUIRE_TLS === 'true' || (process.env.NODE_ENV === 'production' && process.env.DEPLOYSEAL_TLS_TERMINATED !== 'true')
 let midnightClientPromise
 
 function required(name) {
@@ -27,6 +34,30 @@ required('DEPLOYSEAL_STATE_PATH')
 required('DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS')
 required('DEPLOYSEAL_MIDNIGHT_SEED_HEX')
 required('DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD')
+if (requireAuth && !apiToken) {
+  throw Object.assign(new Error('DEPLOYSEAL_API_TOKEN is required when authentication is enabled'), { code: 'INVALID_CONFIG' })
+}
+if (Boolean(tlsKeyFile) !== Boolean(tlsCertFile)) {
+  throw Object.assign(new Error('DEPLOYSEAL_TLS_KEY_FILE and DEPLOYSEAL_TLS_CERT_FILE must be configured together'), { code: 'INVALID_CONFIG' })
+}
+if (requireTls && (!tlsKeyFile || !tlsCertFile)) {
+  throw Object.assign(new Error('DEPLOYSEAL_REQUIRE_TLS requires TLS key and certificate files'), { code: 'INVALID_CONFIG' })
+}
+if (requireAuth && clientOrigin === '*') {
+  throw Object.assign(new Error('CLIENT_ORIGIN must be explicit when authentication is enabled'), { code: 'INVALID_CONFIG' })
+}
+if (process.env.NODE_ENV === 'production' && !process.env.CLIENT_ORIGIN) {
+  throw Object.assign(new Error('CLIENT_ORIGIN is required in production'), { code: 'INVALID_CONFIG' })
+}
+
+let tlsOptions = null
+if (tlsKeyFile && tlsCertFile) {
+  try {
+    tlsOptions = { key: readFileSync(tlsKeyFile), cert: readFileSync(tlsCertFile) }
+  } catch (cause) {
+    throw Object.assign(new Error(`unable to read TLS certificate files: ${cause.message}`), { code: 'INVALID_CONFIG', cause })
+  }
+}
 
 async function midnightClient() {
   midnightClientPromise ||= import('@deployseal/deployseal-contract/preprod').then(({ createMidnightClient }) => createMidnightClient())
@@ -94,25 +125,26 @@ const baseEvidence = {
       }
     : {}),
 }
-const configuredFacts = configuredEvidenceFacts()
-if (useAzure && process.env.DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS === 'true' && !configuredFacts) {
-  throw Object.assign(new Error('signed EvidenceFacts are required for Azure provider mode'), { code: 'INVALID_CONFIG' })
+let configuredFacts
+try {
+  configuredFacts = configuredEvidenceFacts()
+} catch (cause) {
+  throw Object.assign(new Error(cause.message), { code: 'INVALID_CONFIG', cause })
 }
-const evidence = configuredFacts
-  ? {
-      ...baseEvidence,
-      ...evidenceFromFacts(
-        verifyEvidenceBundle(configuredFacts.bundle, configuredFacts.publicKeys, {
-          artifactDigest: baseEvidence.artifactDigest,
-          commitSha: baseEvidence.commitSha,
-          providerId: baseEvidence.providerId,
-          targetId: baseEvidence.targetId,
-          region: baseEvidence.region,
-          policyEpoch: policy.epoch,
-        }),
-      ),
-    }
-  : baseEvidence
+if (!configuredFacts) throw Object.assign(new Error('signed EvidenceFacts and a verification key are required'), { code: 'INVALID_CONFIG' })
+const evidence = {
+  ...baseEvidence,
+  ...evidenceFromFacts(
+    verifyEvidenceBundle(configuredFacts.bundle, configuredFacts.publicKeys, {
+      artifactDigest: baseEvidence.artifactDigest,
+      commitSha: baseEvidence.commitSha,
+      providerId: baseEvidence.providerId,
+      targetId: baseEvidence.targetId,
+      region: baseEvidence.region,
+      policyEpoch: policy.epoch,
+    }),
+  ),
+}
 const proofVerifier = async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
 const finalizeVerifier = async ({ core, receiptHash, policyRoot }) => (await midnightClient()).finalize(core, receiptHash, policyRoot)
 const attestationCheck = azureAttestation
@@ -124,17 +156,24 @@ const broker = new DeploySealBroker({ provider, receiptSigner, proofVerifier, fi
 
 function headers() {
   return {
-    'access-control-allow-origin': process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5173',
+    'access-control-allow-origin': clientOrigin,
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, authorization',
     'cache-control': 'no-store',
     'content-type': 'application/json; charset=utf-8',
   }
 }
 
-function send(response, status, body) {
-  response.writeHead(status, headers())
+function send(response, status, body, extraHeaders = {}) {
+  response.writeHead(status, { ...headers(), ...extraHeaders })
   response.end(JSON.stringify(body))
+}
+
+function authorized(value) {
+  if (!requireAuth || !apiToken || typeof value !== 'string' || !value.startsWith('Bearer ')) return !requireAuth
+  const supplied = Buffer.from(value.slice(7))
+  const expected = Buffer.from(apiToken)
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected)
 }
 
 async function readJson(request) {
@@ -157,7 +196,7 @@ function validScenario(value) {
   return ['crash', 'happy', 'invalid'].includes(value) ? value : 'crash'
 }
 
-const server = createServer(async (request, response) => {
+const requestHandler = async (request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, headers())
     response.end()
@@ -169,6 +208,11 @@ const server = createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && url.pathname === '/api/health') {
       send(response, 200, { ok: true, mode: broker.snapshot().mode })
+      return
+    }
+
+    if (!authorized(request.headers.authorization)) {
+      send(response, 401, { error: { code: 'UNAUTHORIZED', message: 'Bearer authentication is required' } }, { 'www-authenticate': 'Bearer' })
       return
     }
 
@@ -251,11 +295,13 @@ const server = createServer(async (request, response) => {
     const status = Number.isInteger(error.statusCode) ? error.statusCode : 500
     send(response, status, { error: { code: 'INTERNAL_ERROR', message: status === 500 ? 'Request failed' : error.message } })
   }
-})
+}
+
+const server = tlsOptions ? createHttpsServer(tlsOptions, requestHandler) : createHttpServer(requestHandler)
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   server.listen(port, host, () => {
-    console.log(`DeploySeal broker listening on http://${host}:${port}`)
+    console.log(`DeploySeal broker listening on ${tlsOptions ? 'https' : 'http'}://${host}:${port}`)
   })
 }
 

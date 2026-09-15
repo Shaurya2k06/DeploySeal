@@ -156,7 +156,7 @@ export function configuredEvidenceFacts() {
     (process.env.DEPLOYSEAL_EVIDENCE_FACTS_FILE ? readFileSync(process.env.DEPLOYSEAL_EVIDENCE_FACTS_FILE, 'utf8') : null)
   const rawKey = process.env.DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY ||
     (process.env.DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY_FILE ? readFileSync(process.env.DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY_FILE, 'utf8') : null)
-  if (!rawBundle && !rawKey) return null
+  if (!rawBundle && !rawKey) throw failure('EVIDENCE_CONFIG', 'EvidenceFact bundle and verification key are required')
   if (!rawBundle || !rawKey) throw failure('EVIDENCE_CONFIG', 'both EvidenceFact bundle and verification key are required')
   let bundle
   try {

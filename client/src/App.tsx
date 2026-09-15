@@ -51,6 +51,7 @@ type Operation = {
   gates: Gate[]
   timeline: TimelineEvent[]
   proof: Proof | null
+  finalizationTxId?: string | null
   finalizationTxHash?: string | null
   provider: {
     operationId: string | null
@@ -87,6 +88,7 @@ type Disclosure = {
 }
 
 const apiRoot = import.meta.env.VITE_API_URL || ''
+const apiToken = import.meta.env.VITE_API_TOKEN || ''
 const repositoryUrl = 'https://github.com/Shaurya2k06/DeploySeal'
 const midnightExplorerUrl = 'https://preprod.midnightexplorer.com'
 const auditOptions = [
@@ -108,7 +110,11 @@ const flowSteps = [
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiRoot}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
+    headers: {
+      'content-type': 'application/json',
+      ...(apiToken ? { authorization: `Bearer ${apiToken}` } : {}),
+      ...init?.headers,
+    },
   })
   const body = (await response.json()) as T & { error?: { message?: string } }
   if (!response.ok && !('snapshot' in body)) {
@@ -204,18 +210,21 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
     links.push({ label: 'Azure deployment', value: short(providerId.split('/').at(-1), 9), href: azureResourceUrl(providerId) })
   }
 
-  if (detailed && operation?.proof?.txHash) {
+  const reserveTransaction = operation?.proof?.txHash || operation?.proof?.txId
+  const finalizeTransaction = operation?.finalizationTxHash || operation?.finalizationTxId
+
+  if (detailed && reserveTransaction) {
     links.splice(1, 0, {
       label: 'Midnight reserve tx',
-      value: short(operation.proof.txHash, 9),
-      href: midnightTransactionUrl(operation.proof.txHash),
+      value: short(reserveTransaction, 9),
+      href: midnightTransactionUrl(reserveTransaction),
     })
   }
-  if (detailed && operation?.finalizationTxHash) {
+  if (detailed && finalizeTransaction) {
     links.splice(2, 0, {
       label: 'Midnight finalize tx',
-      value: short(operation.finalizationTxHash, 9),
-      href: midnightTransactionUrl(operation.finalizationTxHash),
+      value: short(finalizeTransaction, 9),
+      href: midnightTransactionUrl(finalizeTransaction),
     })
   }
 
@@ -224,15 +233,17 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
   return (
     <div className="explorer-links">
       {links.map((link) => <ExplorerLink key={link.label} {...link} />)}
-      {detailed && operation && !operation.proof?.txHash && <p className="small-note">The reserve transaction hash is not available yet.</p>}
+      {detailed && operation && !reserveTransaction && <p className="small-note">The reserve transaction receipt is not available yet.</p>}
     </div>
   )
 }
 
 function TransactionReceipts({ operation }: { operation: Operation | null }) {
+  const reserveReceipt = operation?.proof?.txHash
+  const finalizeReceipt = operation?.finalizationTxHash
   const receipts = [
-    operation?.proof?.txHash ? ['Reserve transaction', operation.proof.txHash] : null,
-    operation?.finalizationTxHash ? ['Finalize transaction', operation.finalizationTxHash] : null,
+    reserveReceipt ? ['Reserve transaction', reserveReceipt] : null,
+    finalizeReceipt ? ['Finalize transaction', finalizeReceipt] : null,
   ].filter((receipt): receipt is [string, string] => Boolean(receipt))
 
   if (!receipts.length) return null
