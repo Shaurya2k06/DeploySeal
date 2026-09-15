@@ -128,12 +128,19 @@ jobs:
         run: |
           test -n "$AZURE_RESOURCE_GROUP" || { echo 'Set DEPLOYSEAL_AZURE_RESOURCE_GROUP'; exit 1; }
           test -n "$AZURE_VM" || { echo 'Set DEPLOYSEAL_AZURE_VM'; exit 1; }
-          az vm run-command invoke \
+          rollout_output=$(az vm run-command invoke \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_VM" \
             --command-id RunShellScript \
-            --scripts 'set -eu; /opt/deployseal/ops/azure/upgrade-live.sh' \
-            --only-show-errors >/dev/null
+            --scripts 'set -eu; bash /opt/deployseal/ops/azure/upgrade-live.sh' \
+            --only-show-errors \
+            --query 'value[].message' \
+            --output tsv)
+          printf '%s\n' "$rollout_output"
+          printf '%s\n' "$rollout_output" | grep -q 'broker=active' || {
+            echo 'Azure broker did not become active after rollout'
+            exit 1
+          }
 
       - name: Enable Azure HTTPS and private gateway authentication
         if: ${{ vars.DEPLOYSEAL_AZURE_DEPLOY_ENABLED == 'true' && vars.DEPLOYSEAL_AZURE_SECURE_ENABLED == 'true' }}
