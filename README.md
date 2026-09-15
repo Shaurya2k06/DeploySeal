@@ -89,8 +89,11 @@ export DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD='Use-a-strong-secret'
 export DEPLOYSEAL_MIDNIGHT_DB_PATH="$PWD/.deployseal-midnight-level-db"
 export DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX='64 lowercase hex characters'
 export DEPLOYSEAL_PRIVATE_POLICY_JSON='{"maxCriticalCves":0,"maxHighCves":2,"minEvalScore":90,"minimumApprovals":2}'
-export DEPLOYSEAL_EVIDENCE_JSON='{"criticalCves":0,"highCves":1,"evalScore":97,"approvalRoles":["security","governance"]}'
+export DEPLOYSEAL_EVIDENCE_JSON="$(cat /secure/path/private-evidence.json)"
 ```
+
+`DEPLOYSEAL_EVIDENCE_JSON` must come from the trusted private evaluator; do not
+commit sample values or use it as a substitute for signed issuer facts.
 
 Provider mode also requires a signed `EvidenceFactV1` bundle and trusted
 issuer key in `DEPLOYSEAL_EVIDENCE_FACTS_JSON` and
@@ -165,12 +168,13 @@ provides the attestation boundary. No AWS account-side rollout is required.
 
 ## Pending implementation
 
-- The four independent issuer systems still need to supply their real payloads,
-  ciphertexts, and separate signing keys. The repository now signs, verifies,
-  and publishes those facts without inventing them.
-- The one-time Azure/Vercel rollout still needs the Key Vault `api-token`
-  secret, `secure-live.sh`, and Vercel `DEPLOYSEAL_API_TOKEN` plus
-  `DEPLOYSEAL_BACKEND_URL` environment variables.
+- The live Azure broker is waiting for the four independent issuer systems to
+  supply real SBOM, model-evaluation, residency, and approval payloads,
+  ciphertexts, and separate signing keys. Publish the verified bundle with
+  `ops/azure/publish-evidence.sh`; the rollout refuses to proceed without it.
+- The Azure `api-token`, HTTPS termination, Vercel gateway, and backend URL are
+  configured. `/api/health` and the end-to-end demo become live after the
+  signed EvidenceFacts bundle is published.
 
 To verify a saved receipt bundle or SQLite state:
 
