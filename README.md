@@ -12,16 +12,18 @@ policy evidence.
 - [Azure broker health](https://deployseal.vercel.app/api/health)
 - [Midnight Preprod contract](https://preprod.midnightexplorer.com/contracts/0x011e650ec7885e33e40bcb9c2393417e0dc7afff61b33ecaffcbebe59a79c6b7)
 
-The public Vercel client proxies `/api` to the Azure SEV-SNP CVM. The Azure
-path uses MAA attestation, Azure Resource Manager, SQLite durable state, a
-Midnight Preprod contract, and an Azure Key Vault signing key.
+The public Vercel client proxies `/api` through the server-side gateway in
+`api/[...path].js` to the Azure SEV-SNP CVM. The Azure path uses MAA
+attestation, Azure Resource Manager, SQLite durable state, a Midnight Preprod
+contract, and an Azure Key Vault signing key.
 
 The checked-in broker supports bearer authentication and direct HTTPS when
 `DEPLOYSEAL_API_TOKEN`, `DEPLOYSEAL_REQUIRE_AUTH=true`,
 `DEPLOYSEAL_REQUIRE_TLS=true`, `DEPLOYSEAL_TLS_KEY_FILE`, and
-`DEPLOYSEAL_TLS_CERT_FILE` are configured. The public showcase is still
-unauthenticated and uses the existing HTTP Azure origin until those external
-credentials and certificates are provisioned.
+`DEPLOYSEAL_TLS_CERT_FILE` are configured. For the public Azure VM, run
+`ops/azure/secure-live.sh <public-host> <client-origin>` after storing the
+`api-token` secret in Key Vault. It installs HTTPS termination in Nginx and
+keeps the bearer token server-side in Vercel.
 
 If a trusted reverse proxy terminates TLS before Node, set
 `DEPLOYSEAL_TLS_TERMINATED=true` and keep the proxy-to-broker hop private.
@@ -30,11 +32,11 @@ If a trusted reverse proxy terminates TLS before Node, set
 
 | Path | Purpose |
 | --- | --- |
+| `api/` | Server-side Vercel gateway for the authenticated Azure broker |
 | `client/` | Vite/React landing page and live release console |
 | `server/` | Node broker, protocol, provider adapters, receipt verifier, and tests |
 | `contracts/deployseal/` | Compact reserve/finalize contract, generated assets, and Preprod client |
-| `ops/azure/` | Azure CVM bootstrap, attestation inspection, and live upgrade scripts |
-| `ops/aws/` | AWS systemd unit, secret loader, and deployment checklist |
+| `ops/azure/` | Azure CVM bootstrap, secure rollout, evidence publication, and live upgrade scripts |
 | `.github/workflows/` | Checks plus GitHub-attested BuildFact publication to Azure Key Vault |
 
 ## Run locally
@@ -94,6 +96,24 @@ Provider mode also requires a signed `EvidenceFactV1` bundle and trusted
 issuer key in `DEPLOYSEAL_EVIDENCE_FACTS_JSON` and
 `DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY`.
 
+Each issuer can sign a fact from its real payload and ciphertext files:
+
+```sh
+npm --prefix server run issue-evidence -- --kind sbom --role supply-chain \
+  --schema-id deployseal/sbom --schema-version 1 \
+  --subject-artifact-digest <sha256> --scope-file scope.json \
+  --payload-file sbom.json --ciphertext-file sbom.enc \
+  --signer-key-id sbom-issuer-v1 --private-key-file sbom.key \
+  --output sbom.fact.json
+```
+
+The issuer must provide the payload, ciphertext, and signing key; the command
+does not generate evidence values. Verify and publish an assembled bundle with:
+
+```sh
+ops/azure/publish-evidence.sh evidence-facts.json evidence-public-keys.json scope.json
+```
+
 Set `DEPLOYSEAL_MIDNIGHT_PROOF` to a reachable proof server, then use the
 credential-gated commands:
 
@@ -128,31 +148,29 @@ SEV-SNP measurement and challenge, and signs the canonical receipt in Key
 Vault. `ops/azure/upgrade-live.sh` refreshes the live VM from `main`.
 
 `.github/workflows/deployseal-demo.yml` verifies the build attestation, signs a
-BuildFact with the configured adapter key, and publishes the fact and public
-key to Key Vault. It does not invent SBOM, model-evaluation, residency, or
-approval facts; those must be signed by independent issuers and published as
-`evidence-facts-json` plus `evidence-adapter-public-key`. The broker refuses to
-start without that bundle.
+BuildFact with the configured adapter key, publishes it to Key Vault, and can
+roll the Azure VM with `ops/azure/upgrade-live.sh`. It does not invent SBOM,
+model-evaluation, residency, or approval facts; those must be signed by
+independent issuers and published as `evidence-facts-json` plus
+`evidence-adapter-public-key`. The broker refuses to start without that
+bundle.
 
 ## Other provider
 
-`server/src/aws.js` contains the CloudFormation/KMS adapter, and `ops/aws/`
-contains its systemd unit, secret loader, and deployment checklist. AWS mode
-still requires the real Midnight contract, signed BuildFact and EvidenceFact
-bundles, CloudFormation change set, CloudTrail access, KMS key, and an
-explicitly configured `DEPLOYSEAL_ENCLAVE_MEASUREMENT`.
+`server/src/aws.js` remains a real alternate CloudFormation/KMS adapter for
+consumers that explicitly select `DEPLOYSEAL_PROVIDER=aws-cloudformation`.
+Production deployment for this project is Azure-only: ARM replaces the
+CloudFormation effect, Key Vault replaces KMS signing, and the existing CVM
+provides the attestation boundary. No AWS account-side rollout is required.
 
 ## Pending implementation
 
-- Independent production issuers still need to generate and publish the SBOM,
-  model-evaluation, residency, and approval EvidenceFacts. The broker now
-  rejects operator-only evidence without their signed bundle.
-- Public rollout still needs a real auth gateway/token and TLS certificate
-  installation. The code path is present; the public showcase remains open
-  until those external credentials are provisioned.
-- AWS account-side rollout still needs the target stack/change set, IAM role,
-  KMS key, secret files, enclave measurement, and certificates. The tracked
-  `ops/aws/` unit and loader cover the application side.
+- The four independent issuer systems still need to supply their real payloads,
+  ciphertexts, and separate signing keys. The repository now signs, verifies,
+  and publishes those facts without inventing them.
+- The one-time Azure/Vercel rollout still needs the Key Vault `api-token`
+  secret, `secure-live.sh`, and Vercel `DEPLOYSEAL_API_TOKEN` plus
+  `DEPLOYSEAL_BACKEND_URL` environment variables.
 
 To verify a saved receipt bundle or SQLite state:
 

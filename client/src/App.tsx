@@ -88,7 +88,7 @@ type Disclosure = {
 }
 
 const apiRoot = import.meta.env.VITE_API_URL || ''
-const apiToken = import.meta.env.VITE_API_TOKEN || ''
+const apiToken = import.meta.env.DEV ? import.meta.env.VITE_API_TOKEN || '' : ''
 const repositoryUrl = 'https://github.com/Shaurya2k06/DeploySeal'
 const midnightExplorerUrl = 'https://preprod.midnightexplorer.com'
 const auditOptions = [

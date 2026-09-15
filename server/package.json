@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
+    "issue-evidence": "node src/issue-evidence.js",
+    "verify-evidence": "node src/verify-evidence.js",
     "verify-receipt": "node src/verify-receipt.js"
   },
   "keywords": [],

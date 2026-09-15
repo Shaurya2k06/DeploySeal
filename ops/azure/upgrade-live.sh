@@ -107,7 +107,7 @@ set -eu
 umask 077
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 changed=0
-for name in server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key; do
+for name in server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key api-token; do
   temporary="/etc/deployseal/secrets/$name.tmp.$$"
   if ! az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query value --output tsv --only-show-errors >"$temporary" 2>/dev/null; then
     rm -f "$temporary"

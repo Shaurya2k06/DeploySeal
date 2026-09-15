@@ -13,6 +13,7 @@ const secrets = {
   'build-adapter-public-key': 'DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY',
   'evidence-facts-json': 'DEPLOYSEAL_EVIDENCE_FACTS_JSON',
   'evidence-adapter-public-key': 'DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY',
+  'api-token': 'DEPLOYSEAL_API_TOKEN',
 }
 
 for (const [name, variable] of Object.entries(secrets)) {
@@ -23,4 +24,5 @@ for (const [name, variable] of Object.entries(secrets)) {
 const { server } = await import('./index.js')
 const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
-server.listen(port, host, () => console.log(`DeploySeal Azure broker listening on ${process.env.DEPLOYSEAL_TLS_CERT_FILE ? 'https' : 'http'}://${host}:${port}`))
+const protocol = process.env.DEPLOYSEAL_TLS_CERT_FILE || process.env.DEPLOYSEAL_TLS_TERMINATED === 'true' ? 'https' : 'http'
+server.listen(port, host, () => console.log(`DeploySeal Azure broker listening on ${protocol}://${host}:${port}`))

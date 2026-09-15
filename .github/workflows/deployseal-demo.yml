@@ -111,23 +111,37 @@ jobs:
       - name: Roll the Azure broker to this commit
         if: ${{ vars.DEPLOYSEAL_AZURE_DEPLOY_ENABLED == 'true' }}
         env:
-          AZURE_RESOURCE_GROUP: deployseal-azure-rg
-          AZURE_VM: deployseal-cvm
+          AZURE_RESOURCE_GROUP: ${{ vars.DEPLOYSEAL_AZURE_RESOURCE_GROUP }}
+          AZURE_VM: ${{ vars.DEPLOYSEAL_AZURE_VM }}
         run: |
+          test -n "$AZURE_RESOURCE_GROUP" || { echo 'Set DEPLOYSEAL_AZURE_RESOURCE_GROUP'; exit 1; }
+          test -n "$AZURE_VM" || { echo 'Set DEPLOYSEAL_AZURE_VM'; exit 1; }
           az vm run-command invoke \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_VM" \
             --command-id RunShellScript \
-            --scripts 'set -eu
-              git -c safe.directory=/opt/deployseal -C /opt/deployseal stash push --quiet --message deployseal-generated-lock -- client/package-lock.json contracts/deployseal/package-lock.json server/package-lock.json
-              git -c safe.directory=/opt/deployseal -C /opt/deployseal pull --ff-only
-              npm --prefix /opt/deployseal/contracts/deployseal ci
-              npm --prefix /opt/deployseal/server ci
-              npm --prefix /opt/deployseal/client ci
-              git -c safe.directory=/opt/deployseal -C /opt/deployseal stash push --quiet --message deployseal-generated-lock -- client/package-lock.json contracts/deployseal/package-lock.json server/package-lock.json
-              npm --prefix /opt/deployseal/client run build
-              find /var/www/deployseal -mindepth 1 -delete
-              cp -a /opt/deployseal/client/dist/. /var/www/deployseal/
-              /usr/local/bin/deployseal-refresh-build-fact
-              systemctl restart deployseal.service' \
+            --scripts 'set -eu; /opt/deployseal/ops/azure/upgrade-live.sh' \
+            --only-show-errors >/dev/null
+
+      - name: Enable Azure HTTPS and private gateway authentication
+        if: ${{ vars.DEPLOYSEAL_AZURE_DEPLOY_ENABLED == 'true' && vars.DEPLOYSEAL_AZURE_SECURE_ENABLED == 'true' }}
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.DEPLOYSEAL_AZURE_RESOURCE_GROUP }}
+          AZURE_VM: ${{ vars.DEPLOYSEAL_AZURE_VM }}
+          DEPLOYSEAL_PUBLIC_HOST: ${{ vars.DEPLOYSEAL_PUBLIC_HOST }}
+          DEPLOYSEAL_CLIENT_ORIGIN: ${{ vars.DEPLOYSEAL_CLIENT_ORIGIN }}
+        run: |
+          test -n "$AZURE_RESOURCE_GROUP" || { echo 'Set DEPLOYSEAL_AZURE_RESOURCE_GROUP'; exit 1; }
+          test -n "$AZURE_VM" || { echo 'Set DEPLOYSEAL_AZURE_VM'; exit 1; }
+          test -n "$DEPLOYSEAL_PUBLIC_HOST" || { echo 'Set DEPLOYSEAL_PUBLIC_HOST'; exit 1; }
+          test -n "$DEPLOYSEAL_CLIENT_ORIGIN" || { echo 'Set DEPLOYSEAL_CLIENT_ORIGIN'; exit 1; }
+          case "$DEPLOYSEAL_PUBLIC_HOST" in ''|*[!A-Za-z0-9.-]*) echo 'DEPLOYSEAL_PUBLIC_HOST must be a DNS hostname'; exit 1 ;; esac
+          case "$DEPLOYSEAL_CLIENT_ORIGIN" in https://[A-Za-z0-9.-]*) ;; *) echo 'DEPLOYSEAL_CLIENT_ORIGIN must be an HTTPS hostname origin'; exit 1 ;; esac
+          client_origin_host=${DEPLOYSEAL_CLIENT_ORIGIN#https://}
+          case "$client_origin_host" in ''|*[!A-Za-z0-9.-]*) echo 'DEPLOYSEAL_CLIENT_ORIGIN must be an HTTPS hostname origin'; exit 1 ;; esac
+          az vm run-command invoke \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_VM" \
+            --command-id RunShellScript \
+            --scripts "/opt/deployseal/ops/azure/secure-live.sh '$DEPLOYSEAL_PUBLIC_HOST' '$DEPLOYSEAL_CLIENT_ORIGIN'" \
             --only-show-errors >/dev/null
