@@ -13,7 +13,7 @@
   --feature-shadow: rgba(16, 55, 132, .03) 0 17px 37px, rgba(16, 55, 132, .03) 0 67px 67px, rgba(16, 55, 132, .02) 0 150px 90px;
   --button-shadow: rgba(36, 36, 40, .1) 0 1px 2px, rgba(36, 36, 40, .09) 0 3px 3px, rgba(36, 36, 40, .05) 0 6px 4px, rgba(36, 36, 40, .01) 0 11px 4px;
   min-height: 100vh;
-  overflow: hidden;
+  overflow: clip;
   background: var(--paper);
   color: var(--obsidian);
 }
@@ -1128,6 +1128,18 @@ code {
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-top: 24px;
+}
+
+.tx-receipts {
+  display: grid;
+  gap: 14px;
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.tx-receipts .explorer-link {
+  margin: 0;
 }
 
 .landing-record .explorer-links {

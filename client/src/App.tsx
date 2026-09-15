@@ -17,7 +17,7 @@ import './App.css'
 type Gate = {
   id: string
   label: string
-  status: 'verified' | 'failed'
+  status: 'verified' | 'failed' | 'ready'
 }
 
 type TimelineEvent = {
@@ -237,6 +237,20 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
     <div className="explorer-links">
       {links.map((link) => <ExplorerLink key={link.label} {...link} />)}
       {detailed && !operation?.proof?.txHash && <p className="small-note">Run the live path to attach the current reserve and finalize transaction links.</p>}
+    </div>
+  )
+}
+
+function TransactionReceipts({ operation }: { operation: Operation | null }) {
+  const receipts = [
+    operation?.proof?.txHash ? ['Reserve transaction', operation.proof.txHash] : null,
+    operation?.finalizationTxHash ? ['Finalize transaction', operation.finalizationTxHash] : null,
+  ].filter((receipt): receipt is [string, string] => Boolean(receipt))
+
+  return (
+    <div className="tx-receipts">
+      <div className="card-top"><span className="mini-label">Transaction receipts</span><span className="gate-summary">{receipts.length} on-chain</span></div>
+      {receipts.length ? receipts.map(([label, hash]) => <ExplorerLink key={label} label={label} value={short(hash, 14)} href={midnightTransactionUrl(hash)} />) : <p className="small-note">No chain transaction was emitted by the local simulator.</p>}
     </div>
   )
 }
@@ -576,7 +590,7 @@ function DemoPage() {
             </p>
             <div className="hero-actions">
               <button className="button button-primary" disabled={Boolean(busy)} onClick={primaryAction} type="button">
-                {busy ? 'Working…' : isRecoverable ? 'Recover operation' : isFinal ? snapshot?.mode === 'azure-arm' ? 'Run next operation' : 'Reset demo' : 'Run crash-safe demo'}
+                {busy ? 'Working…' : isRecoverable ? 'Continue demo' : isFinal ? snapshot?.mode === 'azure-arm' ? 'Run next operation' : 'Reset demo' : 'Begin demo'}
                 <span aria-hidden="true">↗</span>
               </button>
               <button className="button button-quiet" disabled={Boolean(busy) || Boolean(operation && !(isFinal && snapshot?.mode === 'azure-arm'))} onClick={() => run('/api/release/start', { scenario: 'happy' })} type="button">
@@ -603,6 +617,7 @@ function DemoPage() {
           <p className="demo-flow-copy">Start the crash-safe path to watch private policy proof, single-use authorization, Azure effect, recovery, and receipt finalization move together.</p>
           <FlowSteps operation={operation} />
           <ExplorerLinks detailed snapshot={snapshot} />
+          <TransactionReceipts operation={operation} />
         </section>
 
         <section className={`workspace view-${activeView}`}>
@@ -627,16 +642,16 @@ function DemoPage() {
                   <div className="card-top"><span className="mini-label">Policy gates</span><span className="gate-summary">{operation ? `${operation.gates.filter((gate) => gate.status === 'verified').length} / ${operation.gates.length} verified` : 'Private until proven'}</span></div>
                   <div className="gate-list">
                     {(operation?.gates || [
-                      { id: 'provenance', label: 'Artifact provenance', status: 'verified' },
-                      { id: 'vulnerabilities', label: 'Vulnerability budget', status: 'verified' },
-                      { id: 'evaluation', label: 'Model evaluation', status: 'verified' },
-                      { id: 'target', label: 'Target and residency', status: 'verified' },
-                      { id: 'approvals', label: 'Required approvals', status: 'verified' },
+                      { id: 'provenance', label: 'Artifact provenance', status: 'ready' },
+                      { id: 'vulnerabilities', label: 'Vulnerability budget', status: 'ready' },
+                      { id: 'evaluation', label: 'Model evaluation', status: 'ready' },
+                      { id: 'target', label: 'Target and residency', status: 'ready' },
+                      { id: 'approvals', label: 'Required approvals', status: 'ready' },
                     ]).map((gate) => (
                       <div className="gate" key={gate.id}>
-                        <span className={`gate-icon ${gate.status}`} aria-hidden="true">{gate.status === 'verified' ? '✓' : '!'}</span>
+                        <span className={`gate-icon ${gate.status}`} aria-hidden="true">{gate.status === 'verified' ? '✓' : '·'}</span>
                         <span>{gate.label}</span>
-                        <span className="gate-status">{operation ? gate.status : 'ready'}</span>
+                        <span className="gate-status">{operation ? gate.status : 'awaiting demo'}</span>
                       </div>
                     ))}
                   </div>
