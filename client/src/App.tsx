@@ -529,11 +529,11 @@ function DemoPage() {
     if (isRecoverable) {
       await run('/api/release/recover')
     } else if (isDone) {
-      await run('/api/release/start', { scenario: 'happy' })
+      await run('/api/release/start', { scenario: 'crash' })
       setDisclosure(null)
       setReceiptState('idle')
     } else {
-      await run('/api/release/start', { scenario: 'happy' })
+      await run('/api/release/start', { scenario: 'crash' })
     }
   }
 
