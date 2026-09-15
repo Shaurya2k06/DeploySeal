@@ -30,20 +30,24 @@ if (!inputPath) {
             const signer = new AzureKeyVaultReceiptSigner()
             return signer.verify(message, signature)
           }
-      : async (message, signature) => {
-          if (!process.env.AWS_REGION) throw new Error('AWS_REGION is required for KMS verification')
-          const client = new KMSClient({ region: process.env.AWS_REGION })
-          const result = await client.send(
-            new VerifyCommand({
-              KeyId: bundle.keyId,
-              Message: message,
-              MessageType: 'RAW',
-              Signature: signature,
-              SigningAlgorithm: process.env.DEPLOYSEAL_KMS_SIGNING_ALGORITHM || 'RSASSA_PSS_SHA_256',
-            }),
-          )
-          return result.SignatureValid === true
-        }
+        : process.env.DEPLOYSEAL_PROVIDER === 'aws-cloudformation'
+          ? async (message, signature) => {
+              if (!process.env.AWS_REGION) throw new Error('AWS_REGION is required for KMS verification')
+              const client = new KMSClient({ region: process.env.AWS_REGION })
+              const result = await client.send(
+                new VerifyCommand({
+                  KeyId: bundle.keyId,
+                  Message: message,
+                  MessageType: 'RAW',
+                  Signature: signature,
+                  SigningAlgorithm: process.env.DEPLOYSEAL_KMS_SIGNING_ALGORITHM || 'RSASSA_PSS_SHA_256',
+                }),
+              )
+              return result.SignatureValid === true
+            }
+          : () => {
+              throw new Error('DEPLOYSEAL_PROVIDER must be configured to verify an external receipt')
+            }
     const result = await verifyReceiptBundle(bundle, { kmsVerify: externalVerify })
     console.log(JSON.stringify(result, null, 2))
     if (!result.valid) process.exitCode = 1

@@ -12,7 +12,7 @@ import { SignCommand, VerifyCommand } from '@aws-sdk/client-kms'
 import { test } from 'node:test'
 import { AwsCloudFormationProvider, AwsKmsReceiptSigner } from '../src/aws.js'
 import { DeploySealBroker } from '../src/broker.js'
-import { DEMO_EVIDENCE, PRIVATE_POLICY } from '../src/protocol.js'
+import { TEST_EVIDENCE, TEST_POLICY, TEST_SALT } from './support.js'
 
 const operationId = 'b'.repeat(64)
 const operation = { core: { targetId: 'deployseal-demo-stack', artifactDigest: 'c'.repeat(64) } }
@@ -128,6 +128,7 @@ test('broker production seam recovers a pending CloudFormation result once', asy
         status: 'SUCCEEDED',
         completedAt: '2026-09-12T00:00:00.000Z',
         cloudTrailEventHash: 'd'.repeat(64),
+        enclaveMeasurement: 'test-enclave',
       }
     },
   }
@@ -140,19 +141,21 @@ test('broker production seam recovers a pending CloudFormation result once', asy
       return verify(null, message, keyPair.publicKey, signature)
     },
   }
-  const policy = { ...PRIVATE_POLICY, allowedProviderId: provider.id }
-  const evidence = { ...DEMO_EVIDENCE, providerId: provider.id }
+  const policy = { ...TEST_POLICY, allowedProviderId: provider.id, allowedTargetId: provider.stackName }
+  const evidence = { ...TEST_EVIDENCE, providerId: provider.id, targetId: provider.stackName }
   const broker = new DeploySealBroker({
     statePath: join(directory, 'state.json'),
     policy,
     evidence,
+    policySalt: TEST_SALT,
     provider,
     receiptSigner,
-    proofVerifier: async () => ({ status: 'verified', kind: 'fake-midnight-proof', hash: 'e'.repeat(64) }),
+    proofVerifier: async () => ({ status: 'verified', kind: 'midnight-test', hash: 'e'.repeat(64) }),
+    finalizeVerifier: async () => ({ status: 'verified', kind: 'midnight-test' }),
   })
 
   try {
-    assert.equal(JSON.parse(readFileSync(join(directory, 'state.json'), 'utf8')).receiptKey.privateKey, null)
+    assert.equal('privateKey' in JSON.parse(readFileSync(join(directory, 'state.json'), 'utf8')).receiptKey, false)
     const started = await broker.start({ scenario: 'happy' })
     assert.equal(started.snapshot.operation.status, 'RECOVERY_REQUIRED')
     const recovered = await broker.recover()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import AOS from 'aos'
 import 'aos/dist/aos.css'
 import {
@@ -62,7 +62,6 @@ type Operation = {
 
 type Snapshot = {
   mode: string
-  warning: string
   contractAddress?: string | null
   policy: { epoch: number; root: string }
   operation: Operation | null
@@ -89,10 +88,7 @@ type Disclosure = {
 
 const apiRoot = import.meta.env.VITE_API_URL || ''
 const repositoryUrl = 'https://github.com/Shaurya2k06/DeploySeal'
-const workflowUrl = `${repositoryUrl}/actions/workflows/deployseal-demo.yml`
 const midnightExplorerUrl = 'https://preprod.midnightexplorer.com'
-const liveContractAddress = '011e650ec7885e33e40bcb9c2393417e0dc7afff61b33ecaffcbebe59a79c6b7'
-const azureTargetResourceId = '/subscriptions/9b6559f4-2b0a-4e2a-8f77-b1f72d8310d8/resourceGroups/deployseal-target-rg'
 const auditOptions = [
   ['policyEpoch', 'Policy epoch'],
   ['operationId', 'Operation ID'],
@@ -100,14 +96,6 @@ const auditOptions = [
   ['artifactDigest', 'Artifact digest'],
   ['outcome', 'Outcome'],
 ] as const
-
-const emptyTimeline = [
-  ['proof', 'Private policy proof'],
-  ['reserved', 'Midnight authorization'],
-  ['submitting', 'Provider request'],
-  ['lost', 'Response recovery'],
-  ['finalized', 'Signed receipt'],
-]
 
 const flowSteps = [
   ['01', 'Private policy proof', 'Compact checks the private evidence bundle against the committed policy root.', 'proof'],
@@ -207,21 +195,14 @@ function ExplorerLink({ label, value, href }: { label: string; value: string; hr
 
 function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | null; detailed?: boolean }) {
   const operation = snapshot?.operation
-  const contractAddress = snapshot?.contractAddress || (snapshot?.mode === 'azure-arm' ? liveContractAddress : null)
+  const contractAddress = snapshot?.contractAddress
   const providerId = providerResourceId(snapshot)
-  const links = [
-    {
-      label: 'Midnight contract',
-      value: contractAddress ? short(contractAddress, 9) : 'Preprod explorer',
-      href: contractAddress ? midnightContractUrl(contractAddress) : midnightExplorerUrl,
-    },
-    {
-      label: 'Azure target',
-      value: providerId ? short(providerId.split('/').at(-1), 9) : 'deployseal-target-rg',
-      href: providerId ? azureResourceUrl(providerId) : azureResourceUrl(azureTargetResourceId),
-    },
-    { label: 'GitHub workflow', value: 'deployseal-demo.yml', href: workflowUrl },
-  ]
+  const links: { label: string; value: string; href: string }[] = []
+
+  if (contractAddress) links.push({ label: 'Midnight contract', value: short(contractAddress, 9), href: midnightContractUrl(contractAddress) })
+  if (snapshot?.mode === 'azure-arm' && providerId) {
+    links.push({ label: 'Azure deployment', value: short(providerId.split('/').at(-1), 9), href: azureResourceUrl(providerId) })
+  }
 
   if (detailed && operation?.proof?.txHash) {
     links.splice(1, 0, {
@@ -238,10 +219,12 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
     })
   }
 
+  if (!links.length) return null
+
   return (
     <div className="explorer-links">
       {links.map((link) => <ExplorerLink key={link.label} {...link} />)}
-      {detailed && !operation?.proof?.txHash && <p className="small-note">Run the live path to attach the current reserve and finalize transaction links.</p>}
+      {detailed && operation && !operation.proof?.txHash && <p className="small-note">The reserve transaction hash is not available yet.</p>}
     </div>
   )
 }
@@ -252,10 +235,12 @@ function TransactionReceipts({ operation }: { operation: Operation | null }) {
     operation?.finalizationTxHash ? ['Finalize transaction', operation.finalizationTxHash] : null,
   ].filter((receipt): receipt is [string, string] => Boolean(receipt))
 
+  if (!receipts.length) return null
+
   return (
     <div className="tx-receipts">
       <div className="card-top"><span className="mini-label">Transaction receipts</span><span className="gate-summary">{receipts.length} on-chain</span></div>
-      {receipts.length ? receipts.map(([label, hash]) => <ExplorerLink key={label} label={label} value={short(hash, 14)} href={midnightTransactionUrl(hash)} />) : <p className="small-note">No chain transaction was emitted by the local simulator.</p>}
+      {receipts.map(([label, hash]) => <ExplorerLink key={label} label={label} value={short(hash, 14)} href={midnightTransactionUrl(hash)} />)}
     </div>
   )
 }
@@ -299,13 +284,13 @@ function ArchitectureNode({ data }: NodeProps<ArchitectureNode>) {
 
 const architectureNodeTypes = { architecture: ArchitectureNode }
 
-function ArchitectureDiagram({ live }: { live: boolean }) {
+function ArchitectureDiagram({ connected }: { connected: boolean }) {
   const [nodes, , onNodesChange] = useNodesState(architectureNodes)
   const [edges, , onEdgesChange] = useEdgesState(architectureEdges)
 
   return (
     <div className="architecture-shell">
-      <div className="architecture-toolbar"><span>DRAG TO INSPECT</span><span>SCROLL TO ZOOM</span><strong><i /> {live ? 'LIVE TRACE' : 'SIMULATED TRACE'}</strong></div>
+      <div className="architecture-toolbar"><span>DRAG TO INSPECT</span><span>SCROLL TO ZOOM</span><strong><i /> {connected ? 'LIVE TRACE' : 'AWAITING CONNECTION'}</strong></div>
       <div className="architecture-canvas">
         <ReactFlow
           nodes={nodes}
@@ -360,8 +345,9 @@ function LandingPage() {
     request<Snapshot>('/api/release').then(setSnapshot).catch(() => undefined)
   }, [])
 
-  const live = snapshot?.mode === 'azure-arm'
+  const connected = Boolean(snapshot)
   const operation = snapshot?.operation || null
+  const providerLabel = snapshot?.provider.id?.toUpperCase() || '—'
 
   return (
     <div className="app-shell landing-shell">
@@ -390,12 +376,12 @@ function LandingPage() {
               <a className="button button-primary" href="/demo">Run the live demo <span aria-hidden="true">↗</span></a>
               <a className="button button-quiet" href="#flow">See how it works</a>
             </div>
-            <p className="hero-micro"><span className="status-dot" /> {live ? 'Live on Midnight Preprod + Azure ARM' : snapshot ? 'Local simulator ready for the same flow' : 'Connecting to the release broker'}</p>
+            <p className="hero-micro"><span className="status-dot" /> {snapshot ? `Connected to ${snapshot.mode}` : 'Connecting to the release broker'}</p>
           </div>
           <div className="landing-documents" data-aos="fade-up" data-aos-delay="100" aria-label="A release moving from private evidence to a public receipt">
             <article className="document-card document-before">
               <div className="document-top"><span>RELEASE DOSSIER</span><strong>PRIVATE</strong></div>
-              <div className="document-title"><span className="document-icon">◌</span><div><strong>build / 2026.09</strong><span>evidence bundle</span></div></div>
+              <div className="document-title"><span className="document-icon">◌</span><div><strong>private release</strong><span>evidence bundle</span></div></div>
               <div className="document-lines">
                 <div><span>SBOM</span><i /><b>PRIVATE</b></div>
                 <div><span>EVALUATION</span><i /><b>PRIVATE</b></div>
@@ -407,14 +393,14 @@ function LandingPage() {
             <div className="document-connector" aria-hidden="true"><span>prove + effect</span><strong>→</strong></div>
             <article className="document-card document-after">
               <div className="document-top"><span>DEPLOYSEAL RECEIPT</span><strong className="accent-text">PUBLIC</strong></div>
-              <div className="document-title"><span className="document-icon document-icon-check">✓</span><div><strong>{operation ? short(operation.operationId, 9) : 'operation / ready'}</strong><span>canonical outcome</span></div></div>
+              <div className="document-title"><span className="document-icon document-icon-check">✓</span><div><strong>{operation ? short(operation.operationId, 9) : 'awaiting operation'}</strong><span>canonical outcome</span></div></div>
               <div className="document-lines">
-                <div><span>TARGET</span><i /><b>{live ? 'AZURE ARM' : 'BOUND'}</b></div>
+                <div><span>PROVIDER</span><i /><b>{providerLabel}</b></div>
                 <div><span>EFFECTS</span><i /><b>{snapshot?.provider.effectCount ?? '—'} / 1</b></div>
-                <div><span>STATUS</span><i /><b>{operation?.receipt?.status || 'VERIFIABLE'}</b></div>
-                <div><span>KEY</span><i /><b>KEY VAULT</b></div>
+                <div><span>STATUS</span><i /><b>{operation?.receipt?.status || '—'}</b></div>
+                <div><span>KEY</span><i /><b>{operation?.receipt?.keyId || '—'}</b></div>
               </div>
-              <div className="document-bottom"><span>MIDNIGHT PREPROD</span><span className="accent-text">SIGNED ✓</span></div>
+              <div className="document-bottom"><span>{snapshot?.contractAddress ? 'MIDNIGHT PREPROD' : '—'}</span><span className="accent-text">{operation?.receipt ? 'SIGNED ✓' : '—'}</span></div>
             </article>
           </div>
         </section>
@@ -422,7 +408,7 @@ function LandingPage() {
         <section className="signal-row landing-signal-row" data-aos="fade-up" data-aos-delay="150" aria-label="Live system status">
           <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong><small>committed root</small></div>
           <div><span className="signal-label">Cloud effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong><small>one-use counter</small></div>
-          <div><span className="signal-label">Network</span><strong>{live ? 'MIDNIGHT PREPROD' : 'LOCAL'}</strong><small>{live ? 'explorer links' : 'development mode'}</small></div>
+          <div><span className="signal-label">Network</span><strong>{snapshot?.contractAddress ? 'MIDNIGHT PREPROD' : '—'}</strong><small>{snapshot?.contractAddress ? 'explorer links' : 'awaiting broker'}</small></div>
           <div><span className="signal-label">Status</span><strong>{operation?.status || (snapshot ? 'READY' : 'CONNECTING')}</strong><small>release broker</small></div>
         </section>
 
@@ -445,7 +431,7 @@ function LandingPage() {
               <div className="wave-card">
                 <div className="wave-card-top"><span className="play-button">▶</span><span>Provider effect / reconciled</span><strong>{snapshot?.provider.effectCount ?? '—'}×</strong></div>
                 <div className="waveform" aria-hidden="true">{Array.from({ length: 22 }, (_, index) => <i key={index} />)}</div>
-                <div className="wave-card-bottom"><span>AZURE ARM</span><span>ONE-USE OPERATION</span></div>
+                <div className="wave-card-bottom"><span>{providerLabel}</span><span>ONE-USE OPERATION</span></div>
               </div>
             </article>
           </div>
@@ -453,7 +439,7 @@ function LandingPage() {
 
         <section className="architecture-section" id="architecture">
           <div className="landing-section-heading" data-aos="fade-up"><div><h2>From private<br /><em>proof to effect.</em></h2></div><p>Six bounded steps connect confidential evidence to one cloud effect and one receipt. Move the map, zoom in, and follow the operation ID across each boundary.</p></div>
-          <div data-aos="fade-up" data-aos-delay="100"><ArchitectureDiagram live={live} /></div>
+          <div data-aos="fade-up" data-aos-delay="100"><ArchitectureDiagram connected={connected} /></div>
         </section>
 
         <section className="landing-section flow-section" id="flow">
@@ -491,13 +477,11 @@ function DemoPage() {
   const [receiptState, setReceiptState] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
 
   const operation = snapshot?.operation || null
-  const isRecoverable = operation?.status === 'RECOVERY_REQUIRED'
   const isFinal = operation?.status === 'FINALIZED'
+  const isDone = operation?.status === 'FINALIZED' || operation?.status === 'FAILED'
+  const isRecoverable = ['PROOF_SUBMITTING', 'RECOVERY_REQUIRED', 'SUBMITTING', 'RECEIPT_SIGNED'].includes(operation?.status || '')
   const latestEvent = operation?.timeline.at(-1)
-  const progress = useMemo(() => {
-    if (!operation) return 0
-    return Math.min(operation.timeline.length, emptyTimeline.length)
-  }, [operation])
+  const progress = operation?.timeline.length || 0
 
   useEffect(() => {
     request<Snapshot>('/api/release')
@@ -533,12 +517,12 @@ function DemoPage() {
   async function primaryAction() {
     if (isRecoverable) {
       await run('/api/release/recover')
-    } else if (isFinal) {
-      await run(snapshot?.mode === 'azure-arm' ? '/api/release/start' : '/api/reset', snapshot?.mode === 'azure-arm' ? { scenario: 'crash' } : undefined)
+    } else if (isDone) {
+      await run('/api/release/start', { scenario: 'happy' })
       setDisclosure(null)
       setReceiptState('idle')
     } else {
-      await run('/api/release/start', { scenario: 'crash' })
+      await run('/api/release/start', { scenario: 'happy' })
     }
   }
 
@@ -614,17 +598,14 @@ function DemoPage() {
 
         <section className="demo-flow-section">
           <div className="section-heading"><div><p className="eyebrow"><span>02</span> End-to-end trace</p><h2>Follow one operation.</h2></div><span className="tag">PUBLIC IDENTIFIERS</span></div>
-          <p className="demo-flow-copy">Start the crash-safe path to watch private policy proof, single-use authorization, Azure effect, recovery, and receipt finalization move together.</p>
+          <p className="demo-flow-copy">Run once to watch private policy proof, authorization, provider effect, recovery, and the signed receipt complete as one real operation.</p>
           <div className="hero-actions demo-controls">
             <button className="button button-primary" disabled={Boolean(busy)} onClick={primaryAction} type="button">
-              {busy ? 'Working…' : isRecoverable ? 'Continue demo' : isFinal ? snapshot?.mode === 'azure-arm' ? 'Run next operation' : 'Reset demo' : 'Begin demo'}
+              {busy ? 'Running…' : isRecoverable ? 'Finish demo' : isDone ? 'Run again' : 'Run end-to-end demo'}
               <span aria-hidden="true">↗</span>
             </button>
-            <button className="button button-quiet" disabled={Boolean(busy) || Boolean(operation && !(isFinal && snapshot?.mode === 'azure-arm'))} onClick={() => run('/api/release/start', { scenario: 'happy' })} type="button">
-              Run clean path
-            </button>
           </div>
-          {error && <p className="error" role="alert">{error}. Start the broker with <code>npm --prefix server run start</code>.</p>}
+          {error && <p className="error" role="alert">{error}</p>}
           <FlowSteps operation={operation} />
           <ExplorerLinks detailed snapshot={snapshot} />
           <TransactionReceipts operation={operation} />
@@ -638,43 +619,38 @@ function DemoPage() {
             </div>
 
             {activeView === 'release' && (
-              <>
-                <div className="intent-card">
-                  <div className="card-top"><span className="mini-label">Artifact</span><span className="private-chip"><i /> PRIVATE INPUT</span></div>
-                  <div className="intent-line"><h3>private artifact</h3><span className="hash">{operation ? 'digest bound / undisclosed' : 'awaiting attestation'}</span></div>
-                  <div className="intent-meta">
-                    <div><span>Commit</span><strong>{operation ? 'private / attested' : '—'}</strong></div>
-                    <div><span>Target</span><strong>{operation ? 'private / policy-bound' : snapshot?.mode === 'azure-arm' ? 'Azure / resource group' : 'AWS / CloudFormation'}</strong></div>
-                    <div><span>Provider</span><strong>{operation?.providerId || (snapshot?.mode === 'azure-arm' ? 'Azure Resource Manager' : 'AWS CloudFormation')}</strong></div>
+              operation ? (
+                <>
+                  <div className="intent-card">
+                    <div className="card-top"><span className="mini-label">Operation</span><span className="private-chip"><i /> PRIVATE INPUT</span></div>
+                    <div className="intent-line"><h3>{short(operation.operationId, 10)}</h3><span className="hash">{short(operation.operationDigest, 16)}</span></div>
+                    <div className="intent-meta">
+                      <div><span>Policy epoch</span><strong>{operation.policyEpoch}</strong></div>
+                      <div><span>Provider</span><strong>{operation.providerId}</strong></div>
+                      <div><span>Provider operation</span><strong>{operation.provider.operationId || 'pending'}</strong></div>
+                    </div>
                   </div>
-                </div>
-                <div className="gates-card">
-                  <div className="card-top"><span className="mini-label">Policy gates</span><span className="gate-summary">{operation ? `${operation.gates.filter((gate) => gate.status === 'verified').length} / ${operation.gates.length} verified` : 'Private until proven'}</span></div>
-                  <div className="gate-list">
-                    {(operation?.gates || [
-                      { id: 'provenance', label: 'Artifact provenance', status: 'ready' },
-                      { id: 'vulnerabilities', label: 'Vulnerability budget', status: 'ready' },
-                      { id: 'evaluation', label: 'Model evaluation', status: 'ready' },
-                      { id: 'target', label: 'Target and residency', status: 'ready' },
-                      { id: 'approvals', label: 'Required approvals', status: 'ready' },
-                    ]).map((gate) => (
-                      <div className="gate" key={gate.id}>
-                        <span className={`gate-icon ${gate.status}`} aria-hidden="true">{gate.status === 'verified' ? '✓' : '·'}</span>
-                        <span>{gate.label}</span>
-                        <span className="gate-status">{operation ? gate.status : 'awaiting demo'}</span>
-                      </div>
-                    ))}
+                  <div className="gates-card">
+                    <div className="card-top"><span className="mini-label">Policy gates</span><span className="gate-summary">{operation.gates.filter((gate) => gate.status === 'verified').length} / {operation.gates.length} passed</span></div>
+                    <div className="gate-list">
+                      {operation.gates.map((gate) => (
+                        <div className="gate" key={gate.id}>
+                          <span className={`gate-icon ${gate.status}`} aria-hidden="true">{gate.status === 'verified' ? '✓' : '·'}</span>
+                          <span>{gate.label}</span>
+                          <span className="gate-status">{gate.status === 'verified' ? 'passed' : gate.status}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <p className="privacy-note"><span>◈</span> Policy facts never enter the public release record.</p>
-                </div>
-              </>
+                </>
+              ) : <div className="intent-card"><EmptyState title="Ready to run" body="Run the demo to create a real operation and stream its receipts." /></div>
             )}
 
             {activeView === 'receipt' && (
               <div className="receipt-card">
                 {operation?.receipt ? (
                   <>
-                    <div className="receipt-seal"><Mark small /><span>VERIFIED RECEIPT</span></div>
+                    <div className="receipt-seal"><Mark small /><span>SIGNED RECEIPT</span></div>
                     <div className="receipt-hash"><span>Receipt hash</span><code>{short(operation.receipt.hash, 18)}</code></div>
                     <div className="receipt-grid">
                       <div><span>Operation</span><strong>{short(operation.operationId, 10)}</strong></div>
@@ -686,7 +662,7 @@ function DemoPage() {
                       {receiptState === 'checking' ? 'Checking signature…' : receiptState === 'valid' ? 'Signature verified ✓' : 'Verify signature'}
                     </button>
                     <button className="button button-outline" disabled={Boolean(busy)} onClick={exportReceipt} type="button">Export receipt bundle ↗</button>
-                    <p className="small-note">{snapshot?.mode === 'aws-cloudformation' ? 'AWS KMS signs the canonical receipt after provider reconciliation.' : snapshot?.mode === 'azure-arm' ? 'Azure Key Vault signs the canonical receipt after the resource-group effect is reconciled.' : 'The local key emulator signs the same canonical receipt bytes used by the production KMS paths.'}</p>
+                    <p className="small-note">{snapshot?.mode === 'aws-cloudformation' ? 'AWS KMS signs the canonical receipt after provider reconciliation.' : snapshot?.mode === 'azure-arm' ? 'Azure Key Vault signs the canonical receipt after the resource-group effect is reconciled.' : 'The configured receipt signer signs the canonical provider outcome.'}</p>
                   </>
                 ) : <EmptyState title="No receipt yet" body="Run the release path to mint a signed provider receipt." />}
               </div>
@@ -699,7 +675,7 @@ function DemoPage() {
                   {auditOptions.map(([field, label]) => (
                     <label className="audit-option" key={field}>
                       <input checked={selectedFields.includes(field)} onChange={() => toggleField(field)} type="checkbox" />
-                      <span className="fake-checkbox">✓</span><span>{label}</span>
+                      <span className="checkbox-mark">✓</span><span>{label}</span>
                     </label>
                   ))}
                 </div>
@@ -711,15 +687,13 @@ function DemoPage() {
           </div>
 
           <aside className="timeline-card">
-            <div className="card-top"><span className="mini-label">Operation timeline</span><span className="progress-count">{progress}/{emptyTimeline.length}</span></div>
+            <div className="card-top"><span className="mini-label">Operation timeline</span><span className="progress-count">{progress} events</span></div>
             <div className="timeline-list">
-              {(operation?.timeline || []).length
-                ? operation?.timeline.map((event) => (
-                    <div className="timeline-event" key={`${event.id}-${event.at}`}><span className="timeline-dot done">✓</span><div><strong>{event.label}</strong><span>{time(event.at)}</span></div></div>
-                  ))
-                : emptyTimeline.map(([id, label]) => <div className="timeline-event pending" key={id}><span className="timeline-dot">{id === 'proof' ? '○' : '·'}</span><div><strong>{label}</strong><span>waiting</span></div></div>)}
+              {operation?.timeline.length ? operation.timeline.map((event) => (
+                <div className="timeline-event" key={`${event.id}-${event.at}`}><span className="timeline-dot done">✓</span><div><strong>{event.label}</strong><span>{time(event.at)}</span></div></div>
+              )) : <p className="timeline-empty">Run the demo to stream the real operation timeline.</p>}
             </div>
-            <div className="timeline-footer"><span className="pulse" />{isRecoverable ? 'Recovery required' : isFinal ? 'Operation complete' : 'Awaiting authorization'}<span className="footer-line" /></div>
+            <div className="timeline-footer"><span className="pulse" />{isRecoverable ? 'Recovery required' : isFinal ? 'Operation complete' : isDone ? 'Operation failed' : 'Ready to run'}<span className="footer-line" /></div>
           </aside>
         </section>
 

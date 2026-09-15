@@ -155,18 +155,16 @@ export class AzureArmProvider {
   constructor({
     subscriptionId = process.env.AZURE_SUBSCRIPTION_ID,
     resourceGroup = process.env.DEPLOYSEAL_AZURE_RESOURCE_GROUP,
-    location = process.env.DEPLOYSEAL_AZURE_LOCATION || 'eastus',
-    targetId = process.env.DEPLOYSEAL_AZURE_TARGET || 'deployseal-azure-demo',
+    targetId = process.env.DEPLOYSEAL_AZURE_TARGET,
     client = new AzureRestClient(),
     now = Date.now,
   } = {}) {
-    if (!subscriptionId || !resourceGroup) {
-      throw error('AZURE_PROVIDER_CONFIG', 'AZURE_SUBSCRIPTION_ID and DEPLOYSEAL_AZURE_RESOURCE_GROUP are required')
+    if (!subscriptionId || !resourceGroup || !targetId) {
+      throw error('AZURE_PROVIDER_CONFIG', 'AZURE_SUBSCRIPTION_ID, DEPLOYSEAL_AZURE_RESOURCE_GROUP, and DEPLOYSEAL_AZURE_TARGET are required')
     }
     this.id = process.env.DEPLOYSEAL_PROVIDER_ID || 'azure-arm'
     this.subscriptionId = subscriptionId
     this.resourceGroup = resourceGroup
-    this.location = location
     this.stackName = targetId
     this.targetResourceId = process.env.DEPLOYSEAL_AZURE_TARGET_RESOURCE_ID || resourceGroupId(subscriptionId, resourceGroup)
     this.client = client

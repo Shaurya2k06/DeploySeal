@@ -15,43 +15,9 @@ export const DOMAINS = Object.freeze({
   disclosure: 'DeploySeal/DisclosureV1',
 })
 
-const DEMO_SALT = Buffer.from('0123456789abcdef0123456789abcdef')
-const DEMO_COMMIT = 'a'.repeat(40)
-const DEMO_ARTIFACT_DIGEST = sha256Hex('deployseal-demo-artifact')
-
-export const PRIVATE_POLICY = Object.freeze({
-  version: 1,
-  epoch: 1,
-  allowedRepositoryId: 123456789,
-  allowedWorkflow: 'deployseal-demo.yml',
-  allowedProviderId: 'aws-cloudformation-local',
-  allowedTargetId: 'deployseal-demo-stack',
-  allowedRegion: 'us-east-1',
-  maxCriticalCves: 0,
-  maxHighCves: 2,
-  minEvalScore: 90,
-  requiredApprovalRoles: Object.freeze(['security', 'governance']),
-  minimumApprovals: 2,
-  permitTtlSeconds: 900,
-})
-
-export const DEMO_EVIDENCE = Object.freeze({
-  repositoryId: PRIVATE_POLICY.allowedRepositoryId,
-  workflow: PRIVATE_POLICY.allowedWorkflow,
-  providerId: PRIVATE_POLICY.allowedProviderId,
-  targetId: PRIVATE_POLICY.allowedTargetId,
-  region: PRIVATE_POLICY.allowedRegion,
-  artifactDigest: DEMO_ARTIFACT_DIGEST,
-  commitSha: DEMO_COMMIT,
-  criticalCves: 0,
-  highCves: 1,
-  evalScore: 97,
-  approvalRoles: Object.freeze(['security', 'governance']),
-})
-
 export function configuredPolicySalt() {
   const value = process.env.DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX
-  if (!value) return DEMO_SALT
+  if (!value) throw new Error('DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX is required')
   if (!/^[0-9a-f]{64}$/u.test(value)) throw new Error('DEPLOYSEAL_PRIVATE_POLICY_SALT_HEX must be 32-byte lowercase hex')
   return Buffer.from(value, 'hex')
 }
@@ -93,18 +59,19 @@ function operationMap(core) {
   ])
 }
 
-export function makeOperationCore(overrides = {}) {
+export function makeOperationCore(overrides = {}, policy, evidence) {
+  if (!policy || !evidence) throw new Error('policy and evidence are required to build an operation')
   return {
     version: 1,
-    providerId: PRIVATE_POLICY.allowedProviderId,
-    repositoryId: DEMO_EVIDENCE.repositoryId,
-    runId: 987654321,
-    runAttempt: 1,
-    commitSha: DEMO_COMMIT,
-    artifactDigest: DEMO_EVIDENCE.artifactDigest,
-    targetId: PRIVATE_POLICY.allowedTargetId,
-    environmentId: 'staging',
-    policyEpoch: PRIVATE_POLICY.epoch,
+    providerId: policy.allowedProviderId,
+    repositoryId: evidence.repositoryId,
+    runId: evidence.runId,
+    runAttempt: evidence.runAttempt ?? 1,
+    commitSha: evidence.commitSha,
+    artifactDigest: evidence.artifactDigest,
+    targetId: policy.allowedTargetId,
+    environmentId: evidence.environment || 'production',
+    policyEpoch: policy.epoch,
     nonce: randomBytes(16).toString('hex'),
     ...overrides,
   }
@@ -135,16 +102,18 @@ function compactPrivatePolicy(policy, evidence) {
   }
 }
 
-export function policyRoot(policy = PRIVATE_POLICY, salt = configuredPolicySalt(), evidence = DEMO_EVIDENCE) {
+export function policyRoot(policy, salt = configuredPolicySalt(), evidence) {
+  if (!policy || !evidence) throw new Error('policy and evidence are required to calculate a policy root')
   return Buffer.from(compactPrivatePolicyRoot(compactPrivatePolicy(policy, evidence), salt)).toString('hex')
 }
 
-export function permitHash(core, policy = PRIVATE_POLICY, evidence = DEMO_EVIDENCE) {
+export function permitHash(core, policy, evidence, salt = configuredPolicySalt()) {
+  if (!policy || !evidence) throw new Error('policy and evidence are required to calculate a permit hash')
   return sha256(
     Buffer.concat([
       Buffer.from('DeploySeal/PermitV1\0'),
       operationDigest(core),
-      bytes32(policyRoot(policy, configuredPolicySalt(), evidence)),
+      bytes32(policyRoot(policy, salt, evidence)),
     ]),
   )
 }
@@ -153,7 +122,8 @@ function gate(id, label, ok) {
   return { id, label, status: ok ? 'verified' : 'failed' }
 }
 
-export function evaluatePolicy(core, evidence = DEMO_EVIDENCE, policy = PRIVATE_POLICY) {
+export function evaluatePolicy(core, evidence, policy) {
+  if (!policy || !evidence) throw new Error('policy and evidence are required to evaluate an operation')
   const gates = [
     gate(
       'provenance',
@@ -234,12 +204,4 @@ export function publicOperation(core) {
     providerId: core.providerId,
     policyEpoch: core.policyEpoch,
   }
-}
-
-export function defaultPolicyRoot() {
-  return policyRoot()
-}
-
-export function defaultArtifactDigest() {
-  return DEMO_ARTIFACT_DIGEST
 }

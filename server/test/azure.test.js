@@ -35,7 +35,7 @@ test('Azure ARM adapter uses the operation id as the durable deployment name', a
       throw notFound
     },
   }
-  const provider = new AzureArmProvider({ subscriptionId: 'sub', resourceGroup: 'rg', client })
+  const provider = new AzureArmProvider({ subscriptionId: 'sub', resourceGroup: 'rg', targetId: operation.core.targetId, client })
   const accepted = await provider.execute({ operationId, operation })
 
   assert.equal(calls[1].input.method, 'PUT')

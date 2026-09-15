@@ -12,10 +12,9 @@ policy evidence.
 - [Azure broker health](https://deployseal.vercel.app/api/health)
 - [Midnight Preprod contract](https://preprod.midnightexplorer.com/contracts/0x011e650ec7885e33e40bcb9c2393417e0dc7afff61b33ecaffcbebe59a79c6b7)
 
-The public Vercel client proxies `/api` to the Azure SEV-SNP CVM. The current
-Azure path uses MAA attestation, Azure Resource Manager, SQLite durable state,
-and an Azure Key Vault signing key. The Render blueprint is a local-emulator
-fallback; it does not claim Azure execution or a Midnight transaction.
+The public Vercel client proxies `/api` to the Azure SEV-SNP CVM. The Azure
+path uses MAA attestation, Azure Resource Manager, SQLite durable state, a
+Midnight Preprod contract, and an Azure Key Vault signing key.
 
 The public demo is intentionally unauthenticated and the Azure VM origin is
 HTTP. Do not use it as a production control plane without adding application
@@ -47,7 +46,9 @@ npm --prefix server start
 npm --prefix client run dev
 ```
 
-Open the Vite URL. The local client uses `http://127.0.0.1:8787`; set
+The broker has no local provider, Compact, attestation, or receipt-key fallback.
+Configure a real Azure or AWS provider and a funded Midnight Preprod wallet
+before starting it. The local client uses `http://127.0.0.1:8787`; set
 `VITE_API_URL` if the broker runs elsewhere.
 
 Run the checks with:
@@ -106,7 +107,7 @@ receipt hash.
 Set `DEPLOYSEAL_PROVIDER=azure-arm` and provide the Azure subscription,
 resource-group, target, location, Key Vault, attestation endpoint/token, and
 measurement allowlist variables described in `ops/azure/bootstrap.sh`. The
-broker requires a signed GitHub `BuildFactV1` in Azure mode. Its managed
+broker requires a signed GitHub `BuildFactV1` in provider mode. Its managed
 identity needs access only to the configured target resource group and Key
 Vault signing key.
 
@@ -125,9 +126,20 @@ EvidenceFact gate can be enabled with
 ## Other provider
 
 `server/src/aws.js` contains the tested CloudFormation/KMS alternate adapter.
-It is not the active public deployment. The local broker and Compact simulator
-are useful for development and tests, but are labeled as emulation and are not
-accepted as production proof or attestation.
+It is not the active public deployment. AWS mode still requires the real
+Midnight contract, a signed BuildFact, provider evidence, and an explicitly
+configured `DEPLOYSEAL_ENCLAVE_MEASUREMENT`.
+
+## Pending implementation
+
+- Independent EvidenceFact issuers for SBOM, model evaluation, residency, and
+  approvals. Until those issuers are connected, the operator must supply the
+  release evidence inputs through `DEPLOYSEAL_EVIDENCE_JSON`; the optional
+  EvidenceFact bundle can be enforced with `DEPLOYSEAL_REQUIRE_EVIDENCE_FACTS=true`.
+- Authentication and HTTPS at the public broker origin. The demo remains an
+  intentionally unauthenticated showcase.
+- Live AWS deployment and operations wiring; the adapter and unit coverage
+  exist, but Azure is the only public deployment.
 
 To verify a saved receipt bundle or SQLite state:
 

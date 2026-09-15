@@ -2,30 +2,22 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { test } from 'node:test'
 import { DeploySealBroker } from '../src/broker.js'
 import { receiptBundleFromState, verifyReceiptBundle } from '../src/receipt.js'
-
-const run = promisify(execFile)
+import { testBrokerOptions, testReceiptSigner } from './support.js'
 
 test('receipt bundle verifies independently and rejects mutation', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'deployseal-receipt-'))
   const statePath = join(directory, 'state.json')
   try {
-    const broker = new DeploySealBroker({ statePath })
+    const signer = testReceiptSigner()
+    const broker = new DeploySealBroker(testBrokerOptions(statePath, { receiptSigner: signer }))
     await broker.start({ scenario: 'happy' })
     const bundle = receiptBundleFromState(JSON.parse(readFileSync(statePath, 'utf8')))
-    assert.equal((await verifyReceiptBundle(bundle)).valid, true)
+    assert.equal((await verifyReceiptBundle(bundle, { kmsVerify: (message, signature) => signer.verify(message, signature) })).valid, true)
     const mutated = { ...bundle, receipt: { ...bundle.receipt, actualTarget: 'other-stack' } }
-    assert.equal((await verifyReceiptBundle(mutated)).valid, false)
-
-    const { stdout } = await run(process.execPath, ['src/verify-receipt.js', statePath], {
-      cwd: new URL('..', import.meta.url),
-    })
-    assert.match(stdout, /"valid": true/u)
-    assert.doesNotMatch(stdout, /privateKey/u)
+    assert.equal((await verifyReceiptBundle(mutated, { kmsVerify: (message, signature) => signer.verify(message, signature) })).valid, false)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -35,12 +27,9 @@ test('receipt verifier reads the durable SQLite state', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'deployseal-receipt-sqlite-'))
   const statePath = join(directory, 'state.sqlite')
   try {
-    const broker = new DeploySealBroker({ statePath })
+    const broker = new DeploySealBroker(testBrokerOptions(statePath))
     await broker.start({ scenario: 'happy' })
-    const { stdout } = await run(process.execPath, ['src/verify-receipt.js', statePath], {
-      cwd: new URL('..', import.meta.url),
-    })
-    assert.match(stdout, /"valid": true/u)
+    assert.equal((await broker.verifyReceipt()).valid, true)
     broker.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })

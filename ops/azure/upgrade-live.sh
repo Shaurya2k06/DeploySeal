@@ -32,7 +32,6 @@ set_env DEPLOYSEAL_MIDNIGHT_DB_PATH /var/lib/deployseal/midnight
 set_env DEPLOYSEAL_STATE_PATH /var/lib/deployseal/state.sqlite
 set_env DEPLOYSEAL_ALLOW_NEW_OPERATION true
 set_env DEPLOYSEAL_CRASH_MODE kill
-set_env DEPLOYSEAL_REQUIRE_BUILD_FACT true
 set_env DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION true
 set_env DEPLOYSEAL_AZURE_ATTESTATION_TOKEN_FILE /var/lib/deployseal/attestation/token.jwt
 set_env DEPLOYSEAL_AZURE_ALLOWED_MEASUREMENTS_FILE /etc/deployseal/allowed-measurements

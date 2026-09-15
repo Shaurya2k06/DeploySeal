@@ -11,7 +11,7 @@ const NULLIFIER = Uint8Array.from({ length: 32 }, (_, index) => 255 - index)
 const OPERATION_DIGEST = Uint8Array.from({ length: 32 }, (_, index) => index + 1)
 const SALT = Uint8Array.from({ length: 32 }, (_, index) => index + 33)
 
-async function simulator(policy = {}, salt = SALT) {
+async function contractContext(policy = {}, salt = SALT) {
   const privatePolicy = {
     criticalCves: 0n,
     maxCriticalCves: 0n,
@@ -42,7 +42,7 @@ async function simulator(policy = {}, salt = SALT) {
 }
 
 test('Compact reservation is bound to the private root and consumes a nullifier once', async () => {
-  const { contract, context } = await simulator()
+  const { contract, context } = await contractContext()
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
   const first = await contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n)
   const state = ledger(first.context.currentQueryContext.state)
@@ -57,7 +57,7 @@ test('Compact reservation is bound to the private root and consumes a nullifier 
 })
 
 test('Compact rejects a mismatched private policy witness', async () => {
-  const { contract, context } = await simulator({ highCves: 3n, maxHighCves: 2n })
+  const { contract, context } = await contractContext({ highCves: 3n, maxHighCves: 2n })
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
 
   assert.throws(
@@ -71,7 +71,7 @@ test('Compact rejects private evaluation and approval failures', async () => {
     ['evalScore', 89n, 'Private evaluation threshold failed'],
     ['approvalCount', 1n, 'Private approval quorum failed'],
   ]) {
-    const { contract, context } = await simulator({ [field]: value })
+    const { contract, context } = await contractContext({ [field]: value })
     const policyRoot = ledger(context.currentQueryContext.state).policyRoot
     assert.throws(
       () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n),
@@ -81,7 +81,7 @@ test('Compact rejects private evaluation and approval failures', async () => {
 })
 
 test('Compact rejects a stale public policy epoch', async () => {
-  const { contract, context } = await simulator()
+  const { contract, context } = await contractContext()
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
   assert.throws(
     () => contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 2n),
@@ -90,7 +90,7 @@ test('Compact rejects a stale public policy epoch', async () => {
 })
 
 test('Compact finalizes a reserved operation once', async () => {
-  const { contract, context } = await simulator()
+  const { contract, context } = await contractContext()
   const policyRoot = ledger(context.currentQueryContext.state).policyRoot
   const reserved = await contract.impureCircuits.reserve(context, policyRoot, NULLIFIER, OPERATION_DIGEST, 1n)
   const finalized = await contract.impureCircuits.finalize(

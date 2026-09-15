@@ -4,11 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { DeploySealBroker } from '../src/broker.js'
-import { DEMO_EVIDENCE, PRIVATE_POLICY, makeOperationCore, operationDigest, operationId } from '../src/protocol.js'
+import { makeOperationCore, operationDigest, operationId } from '../src/protocol.js'
+import {
+  TEST_EVIDENCE,
+  TEST_POLICY,
+  testBrokerOptions,
+} from './support.js'
 
-function makeBroker() {
+function makeBroker(overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'deployseal-test-'))
-  const broker = new DeploySealBroker({ statePath: join(directory, 'state.json') })
+  const broker = new DeploySealBroker(testBrokerOptions(join(directory, 'state.json'), overrides))
   return { broker, directory }
 }
 
@@ -62,14 +67,13 @@ test('lost provider response recovers once with the same token and receipt', asy
 test('unknown Midnight response resumes the same reserved operation', async () => {
   const { directory } = makeBroker()
   let proofCalls = 0
-  const broker = new DeploySealBroker({
-    statePath: join(directory, 'state.json'),
+  const broker = new DeploySealBroker(testBrokerOptions(join(directory, 'state.json'), {
     proofVerifier: async ({ operationDigest }) => {
       proofCalls += 1
       if (proofCalls === 1) throw new Error('response lost')
       return { status: 'verified', kind: 'midnight-test', hash: operationDigest.toString('hex') }
     },
-  })
+  }))
   try {
     const interrupted = await broker.start({ scenario: 'happy' })
     assert.equal(interrupted.interrupted, true)
@@ -93,21 +97,20 @@ test('the real crash seam loses the response before writing a provider checkpoin
     capabilities: { nativeIdempotency: true, durableQueryByOperationId: true, receiptCanBindActualTargetAndDigest: true },
     async execute(input) {
       calls += 1
-      return { providerOperationId: 'provider-1', actualTarget: input.operation.core.targetId, actualArtifactDigest: input.operation.core.artifactDigest, status: 'SUCCEEDED', completedAt: new Date().toISOString() }
+        return { providerOperationId: 'provider-1', actualTarget: input.operation.core.targetId, actualArtifactDigest: input.operation.core.artifactDigest, status: 'SUCCEEDED', completedAt: new Date().toISOString(), providerEvidenceHash: 'd'.repeat(64), enclaveMeasurement: 'test-enclave' }
     },
     async query(input) {
       calls += 1
-      return { providerOperationId: 'provider-1', actualTarget: input.operation.core.targetId, actualArtifactDigest: input.operation.core.artifactDigest, status: 'SUCCEEDED', completedAt: new Date().toISOString() }
+      return { providerOperationId: 'provider-1', actualTarget: input.operation.core.targetId, actualArtifactDigest: input.operation.core.artifactDigest, status: 'SUCCEEDED', completedAt: new Date().toISOString(), providerEvidenceHash: 'd'.repeat(64), enclaveMeasurement: 'test-enclave' }
     },
   }
-  const broker = new DeploySealBroker({
-    statePath: join(directory, 'state.json'),
+  const broker = new DeploySealBroker(testBrokerOptions(join(directory, 'state.json'), {
     provider,
     proofVerifier: async () => ({ status: 'verified', kind: 'midnight-test' }),
-    policy: { ...PRIVATE_POLICY, allowedProviderId: provider.id },
-    evidence: { ...DEMO_EVIDENCE, providerId: provider.id },
+    policy: { ...TEST_POLICY, allowedProviderId: provider.id, allowedTargetId: provider.stackName },
+    evidence: { ...TEST_EVIDENCE, providerId: provider.id, targetId: provider.stackName },
     crashProcess() { throw Object.assign(new Error('process would be killed here'), { code: 'RESPONSE_LOST' }) },
-  })
+  }))
   try {
     const interrupted = await broker.start({ scenario: 'crash' })
     assert.equal(interrupted.snapshot.operation.status, 'RECOVERY_REQUIRED')
@@ -123,8 +126,7 @@ test('receipt signing is durable before Midnight finalization', async () => {
   const { directory } = makeBroker()
   let finalizeCalls = 0
   let signCalls = 0
-  const broker = new DeploySealBroker({
-    statePath: join(directory, 'state.json'),
+  const broker = new DeploySealBroker(testBrokerOptions(join(directory, 'state.json'), {
     proofVerifier: async () => ({ status: 'verified', kind: 'midnight-test' }),
     finalizeVerifier: async () => {
       finalizeCalls += 1
@@ -141,7 +143,7 @@ test('receipt signing is durable before Midnight finalization', async () => {
         return true
       },
     },
-  })
+  }))
   try {
     await assert.rejects(broker.start({ scenario: 'happy' }), /finalization response lost/u)
     assert.equal(broker.currentOperation().status, 'RECEIPT_SIGNED')
@@ -170,7 +172,7 @@ test('policy failure happens before provider invocation', async () => {
 })
 
 test('operation identity is canonical and provider-safe', () => {
-  const core = makeOperationCore({ nonce: '0123456789abcdef0123456789abcdef' })
+  const core = makeOperationCore({ nonce: '0123456789abcdef0123456789abcdef' }, TEST_POLICY, TEST_EVIDENCE)
   const digest = operationDigest(core).toString('hex')
   const id = operationId(core)
   assert.match(digest, /^[0-9a-f]{64}$/u)
@@ -204,7 +206,7 @@ test('audit disclosure keeps the receipt key id when a signer resolves a key ver
       return true
     },
   }
-  const broker = new DeploySealBroker({ statePath: join(directory, 'state.json'), receiptSigner: signer })
+  const broker = new DeploySealBroker(testBrokerOptions(join(directory, 'state.json'), { receiptSigner: signer }))
   try {
     await broker.start({ scenario: 'happy' })
     const result = await broker.disclose(['outcome'])
@@ -218,8 +220,8 @@ test('audit disclosure keeps the receipt key id when a signer resolves a key ver
 test('SQLite state lease serializes separate broker workers and preserves checkpoints', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'deployseal-sqlite-'))
   const statePath = join(directory, 'state.sqlite')
-  const first = new DeploySealBroker({ statePath })
-  const second = new DeploySealBroker({ statePath })
+  const first = new DeploySealBroker(testBrokerOptions(statePath))
+  const second = new DeploySealBroker(testBrokerOptions(statePath))
   const events = []
   let entered
   const enteredPromise = new Promise((resolve) => { entered = resolve })
@@ -246,7 +248,7 @@ test('SQLite state lease serializes separate broker workers and preserves checkp
     release()
     await Promise.all([firstRun, secondRun])
     assert.deepEqual(events, ['first-start', 'first-end', 'second-start', 'second-end'])
-    const reopened = new DeploySealBroker({ statePath })
+    const reopened = new DeploySealBroker(testBrokerOptions(statePath))
     try {
       assert.equal(reopened.state.lastAttempt.type, 'second')
     } finally {

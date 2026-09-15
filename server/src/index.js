@@ -4,27 +4,37 @@ import { readFileSync } from 'node:fs'
 import { AwsCloudFormationProvider, AwsKmsReceiptSigner } from './aws.js'
 import { AzureArmProvider, AzureKeyVaultReceiptSigner, AzureTeeAttestation } from './azure.js'
 import { DeploySealBroker } from './broker.js'
-import { finalizeLocalCompactReceipt, verifyLocalCompactProof } from './compact.js'
 import { configuredEvidenceFacts, evidenceFromFacts, verifyEvidenceBundle } from './evidence.js'
 import { validateBuildFact, verifyBuildFact } from './github.js'
-import { DEMO_EVIDENCE, PRIVATE_POLICY } from './protocol.js'
+import { configuredPolicySalt } from './protocol.js'
 
 const port = Number(process.env.PORT || 8787)
 const host = process.env.HOST || '127.0.0.1'
 const useAws = process.env.DEPLOYSEAL_PROVIDER === 'aws-cloudformation'
 const useAzure = process.env.DEPLOYSEAL_PROVIDER === 'azure-arm'
-const useExternalProvider = useAws || useAzure
-const useMidnight = useExternalProvider && Boolean(process.env.DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS && process.env.DEPLOYSEAL_MIDNIGHT_SEED_HEX)
 let midnightClientPromise
+
+function required(name) {
+  const value = process.env[name]
+  if (!value) throw Object.assign(new Error(`${name} is required`), { code: 'INVALID_CONFIG' })
+  return value
+}
+
+if (!useAws && !useAzure) {
+  throw Object.assign(new Error('DEPLOYSEAL_PROVIDER must be aws-cloudformation or azure-arm'), { code: 'INVALID_CONFIG' })
+}
+required('DEPLOYSEAL_STATE_PATH')
+required('DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS')
+required('DEPLOYSEAL_MIDNIGHT_SEED_HEX')
+required('DEPLOYSEAL_MIDNIGHT_PRIVATE_STATE_PASSWORD')
 
 async function midnightClient() {
   midnightClientPromise ||= import('@deployseal/deployseal-contract/preprod').then(({ createMidnightClient }) => createMidnightClient())
   return midnightClientPromise
 }
 
-function configuredJson(name, fallback) {
-  const value = process.env[name]
-  if (!value) return fallback
+function configuredJson(name) {
+  const value = required(name)
   try {
     return JSON.parse(value)
   } catch {
@@ -64,25 +74,16 @@ function configuredBuildFact() {
   return fact
 }
 
-const provider = useAws ? new AwsCloudFormationProvider() : useAzure ? new AzureArmProvider() : null
-const receiptSigner = useAws ? new AwsKmsReceiptSigner() : useAzure ? new AzureKeyVaultReceiptSigner() : null
+const provider = useAws ? new AwsCloudFormationProvider() : new AzureArmProvider()
+const receiptSigner = useAws ? new AwsKmsReceiptSigner() : new AzureKeyVaultReceiptSigner()
 const azureAttestation = useAzure ? await AzureTeeAttestation.fromEnv() : null
 if (azureAttestation) process.env.DEPLOYSEAL_ENCLAVE_MEASUREMENT = azureAttestation.measurement
-const azureTarget = process.env.DEPLOYSEAL_AZURE_TARGET || 'deployseal-azure-demo'
-const azureLocation = process.env.DEPLOYSEAL_AZURE_LOCATION || 'eastus'
-const policy = configuredJson(
-  'DEPLOYSEAL_POLICY_JSON',
-  useAzure ? { ...PRIVATE_POLICY, allowedProviderId: 'azure-arm', allowedTargetId: azureTarget, allowedRegion: azureLocation } : PRIVATE_POLICY,
-)
+if (useAws) required('DEPLOYSEAL_ENCLAVE_MEASUREMENT')
+const policy = configuredJson('DEPLOYSEAL_POLICY_JSON')
 const buildFact = configuredBuildFact()
-if (useAzure && process.env.DEPLOYSEAL_REQUIRE_BUILD_FACT !== 'false' && !buildFact) {
-  throw Object.assign(new Error('a signed BuildFact is required for Azure provider mode'), { code: 'INVALID_CONFIG' })
-}
+if (!buildFact) throw Object.assign(new Error('a signed BuildFact is required for provider mode'), { code: 'INVALID_CONFIG' })
 const baseEvidence = {
-  ...configuredJson(
-    'DEPLOYSEAL_EVIDENCE_JSON',
-    useAzure ? { ...DEMO_EVIDENCE, providerId: 'azure-arm', targetId: azureTarget, region: azureLocation } : DEMO_EVIDENCE,
-  ),
+  ...configuredJson('DEPLOYSEAL_EVIDENCE_JSON'),
   ...(buildFact
     ? {
         repositoryId: buildFact.immutableRepositoryId,
@@ -112,22 +113,14 @@ const evidence = configuredFacts
       ),
     }
   : baseEvidence
-const proofVerifier = useMidnight
-  ? async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
-  : useAws
-    ? null
-    : verifyLocalCompactProof
-const finalizeVerifier = useMidnight
-  ? async ({ core, receiptHash, policyRoot }) => (await midnightClient()).finalize(core, receiptHash, policyRoot)
-  : useAws
-    ? null
-    : finalizeLocalCompactReceipt
+const proofVerifier = async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
+const finalizeVerifier = async ({ core, receiptHash, policyRoot }) => (await midnightClient()).finalize(core, receiptHash, policyRoot)
 const attestationCheck = azureAttestation
   ? ({ operationDigest }) => process.env.DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION === 'true'
     ? azureAttestation.attestChallenge(operationDigest.toString('hex'))
     : azureAttestation.refresh()
   : null
-const broker = new DeploySealBroker({ provider, receiptSigner, proofVerifier, finalizeVerifier, policy, evidence, buildFact, attestationCheck })
+const broker = new DeploySealBroker({ provider, receiptSigner, proofVerifier, finalizeVerifier, policy, evidence, policySalt: configuredPolicySalt(), buildFact, attestationCheck })
 
 function headers() {
   return {
@@ -250,12 +243,6 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && url.pathname === '/api/receipt/export') {
       const result = await broker.receiptBundle()
       send(response, result.accepted ? 200 : 409, result)
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/reset') {
-      const result = await broker.reset()
-      send(response, result.accepted === false ? 409 : 200, result.accepted === false ? result : { accepted: true, snapshot: result })
       return
     }
 

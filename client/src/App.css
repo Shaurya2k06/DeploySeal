@@ -304,7 +304,7 @@ footer {
 .button:focus-visible,
 .nav button:focus-visible,
 .landing-nav a:focus-visible,
-.audit-option input:focus-visible + .fake-checkbox {
+.audit-option input:focus-visible + .checkbox-mark {
   outline: 3px solid rgba(37, 151, 208, .5);
   outline-offset: 3px;
 }
@@ -1417,6 +1417,11 @@ code {
   margin: 28px 0 34px;
 }
 
+.timeline-empty {
+  color: var(--charcoal);
+  font: 11px/1.5 var(--mono);
+}
+
 .timeline-list::before {
   position: absolute;
   top: 9px;
@@ -1587,7 +1592,7 @@ code {
   opacity: 0;
 }
 
-.fake-checkbox {
+.checkbox-mark {
   display: inline-grid;
   width: 16px;
   height: 16px;
@@ -1598,7 +1603,7 @@ code {
   font: 700 10px/1 var(--mono);
 }
 
-.audit-option input:checked + .fake-checkbox {
+.audit-option input:checked + .checkbox-mark {
   color: #fff;
   border-color: var(--blue);
   background: var(--blue);

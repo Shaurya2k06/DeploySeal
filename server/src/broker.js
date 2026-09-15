@@ -1,11 +1,8 @@
-import { generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto'
-import { dirname, join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
+import { dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import {
-  DEMO_EVIDENCE,
-  PRIVATE_POLICY,
   disclosureHash,
   encodeCanonical,
   evaluatePolicy,
@@ -21,7 +18,6 @@ import {
 } from './protocol.js'
 import { validateBuildFact } from './github.js'
 
-const DEFAULT_STATE_PATH = join(tmpdir(), 'deployseal-state.json')
 const FINAL_STATES = new Set(['FINALIZED', 'FAILED'])
 const REQUIRED_PROVIDER_CAPABILITIES = [
   'nativeIdempotency',
@@ -134,20 +130,15 @@ function now() {
   return new Date().toISOString()
 }
 
-function initialState(policy, evidence, receiptSigner = null) {
-  const keyPair = receiptSigner ? null : generateKeyPairSync('ed25519')
+function initialState(policy, evidence, receiptSigner, policySalt) {
   return {
     version: 1,
-    policy: { epoch: policy.epoch, root: policyRoot(policy, undefined, evidence) },
+    policy: { epoch: policy.epoch, root: policyRoot(policy, policySalt, evidence) },
     operations: {},
     provider: { executions: {} },
     audit: [],
     lastAttempt: null,
-    receiptKey: {
-      id: receiptSigner?.id || 'local-kms-demo',
-      privateKey: keyPair ? keyPair.privateKey.export({ format: 'pem', type: 'pkcs8' }) : null,
-      publicKey: keyPair ? keyPair.publicKey.export({ format: 'pem', type: 'spki' }) : null,
-    },
+    receiptKey: { id: receiptSigner.id },
   }
 }
 
@@ -175,17 +166,30 @@ function assertProviderCapabilities(provider) {
 
 export class DeploySealBroker {
   constructor({
-    statePath = process.env.DEPLOYSEAL_STATE_PATH || DEFAULT_STATE_PATH,
-    policy = PRIVATE_POLICY,
-    evidence = DEMO_EVIDENCE,
-    provider = null,
-    receiptSigner = null,
-    proofVerifier = null,
-    finalizeVerifier = null,
+    statePath = process.env.DEPLOYSEAL_STATE_PATH,
+    policy,
+    evidence,
+    policySalt,
+    provider,
+    receiptSigner,
+    proofVerifier,
+    finalizeVerifier,
     attestationCheck = null,
     buildFact = null,
     crashProcess = process.env.DEPLOYSEAL_CRASH_MODE === 'kill' ? process.kill : null,
   } = {}) {
+    if (!provider) throw Object.assign(new Error('a provider adapter is required'), { code: 'INTEGRATION_CONFIG' })
+    assertProviderCapabilities(provider)
+    if (!statePath) throw Object.assign(new Error('DEPLOYSEAL_STATE_PATH is required'), { code: 'STATE_CONFIG' })
+    if (!policy || !evidence || !Buffer.isBuffer(policySalt) || policySalt.length !== 32) {
+      throw Object.assign(new Error('policy, evidence, and a 32-byte policy salt are required'), { code: 'POLICY_CONFIG' })
+    }
+    if (
+      !receiptSigner?.id || typeof receiptSigner.sign !== 'function' || typeof receiptSigner.verify !== 'function' ||
+      typeof proofVerifier !== 'function' || typeof finalizeVerifier !== 'function'
+    ) {
+      throw Object.assign(new Error('receipt signer, Midnight proof, and Midnight finalization are required'), { code: 'INTEGRATION_CONFIG' })
+    }
     this.statePath = statePath
     this.store = statePath.endsWith('.sqlite') ? new SqliteStateStore(statePath) : null
     this.leaseOwner = this.store ? `${process.pid}-${randomUUID()}` : null
@@ -195,6 +199,7 @@ export class DeploySealBroker {
     if (!Number.isSafeInteger(this.leaseTimeoutMs) || this.leaseTimeoutMs < 1_000) throw new Error('DEPLOYSEAL_STATE_LOCK_TIMEOUT_MS must be at least 1000')
     this.policy = policy
     this.evidence = evidence
+    this.policySalt = policySalt
     this.providerAdapter = provider
     this.receiptSigner = receiptSigner
     this.proofVerifier = proofVerifier
@@ -204,7 +209,6 @@ export class DeploySealBroker {
     this.crashProcess = crashProcess
     this.leaseHeld = false
     this.leaseLost = false
-    if (this.providerAdapter) assertProviderCapabilities(this.providerAdapter)
     this.lock = Promise.resolve()
     this.state = this.load()
   }
@@ -212,14 +216,14 @@ export class DeploySealBroker {
   load() {
     const stored = this.store ? this.store.read() : existsSync(this.statePath) ? JSON.parse(readFileSync(this.statePath, 'utf8')) : null
     if (!stored) {
-      const state = initialState(this.policy, this.evidence, this.receiptSigner)
+      const state = initialState(this.policy, this.evidence, this.receiptSigner, this.policySalt)
       this.state = state
       this.save()
       return state
     }
 
     const state = stored
-    const expectedPolicy = { epoch: this.policy.epoch, root: policyRoot(this.policy, undefined, this.evidence) }
+    const expectedPolicy = { epoch: this.policy.epoch, root: policyRoot(this.policy, this.policySalt, this.evidence) }
     let stateChanged = false
     if (state.policy?.epoch !== expectedPolicy.epoch || state.policy?.root !== expectedPolicy.root) {
       if (Object.keys(state.operations || {}).length) {
@@ -235,18 +239,18 @@ export class DeploySealBroker {
       state.provider.executions = {}
       stateChanged = true
     }
-    if (this.receiptSigner) {
-      if (state.receiptKey?.privateKey && Object.keys(state.operations || {}).length) {
-        throw Object.assign(new Error('durable state belongs to a different receipt-key mode'), {
-          code: 'RECEIPT_KEY_MODE_MISMATCH',
-        })
-      }
-      state.receiptKey = { id: this.receiptSigner.id, privateKey: null, publicKey: null }
-      this.state = state
-      this.save()
-    } else if (!state.receiptKey?.privateKey || !state.receiptKey?.publicKey) {
-      const fresh = initialState(this.policy, this.evidence)
-      state.receiptKey = fresh.receiptKey
+    if (state.receiptKey?.privateKey || state.receiptKey?.publicKey) {
+      throw Object.assign(new Error('durable state contains a local receipt key'), {
+        code: 'RECEIPT_KEY_MODE_MISMATCH',
+      })
+    }
+    if (state.receiptKey?.id && state.receiptKey.id !== this.receiptSigner.id && Object.keys(state.operations || {}).length) {
+      throw Object.assign(new Error('durable state belongs to a different receipt key'), {
+        code: 'RECEIPT_KEY_MODE_MISMATCH',
+      })
+    }
+    if (state.receiptKey?.id !== this.receiptSigner.id) {
+      state.receiptKey = { id: this.receiptSigner.id }
       this.state = state
       this.save()
     }
@@ -308,11 +312,8 @@ export class DeploySealBroker {
     const providerEffectCount = Object.keys(this.state.provider.executions).length
 
     return {
-      mode: this.providerAdapter?.mode || this.providerAdapter?.id || 'local-emulator',
+      mode: this.providerAdapter.mode || this.providerAdapter.id,
       contractAddress: process.env.DEPLOYSEAL_MIDNIGHT_CONTRACT_ADDRESS || null,
-      warning: this.providerAdapter
-        ? `${this.providerAdapter.id} path: Compact proof verification, TEE isolation, and receipt-key policy are configured separately.`
-        : 'Local demo only: Compact runs a local simulator; cloud provider, TEE, and receipt signing are emulated.',
       policy: this.state.policy,
       operation: operation
         ? {
@@ -329,7 +330,7 @@ export class DeploySealBroker {
                   effectCount: providerEffectCount,
                 }
               : { operationId: null, requestToken: operation.operationId, effectCount: providerEffectCount },
-              receipt: operation.receipt
+            receipt: operation.receipt
               ? {
                   hash: operation.receiptHash,
                   keyId: operation.receipt.receiptKeyId,
@@ -339,7 +340,7 @@ export class DeploySealBroker {
           }
         : null,
       provider: {
-        id: this.providerAdapter?.id || 'aws-cloudformation-local',
+        id: this.providerAdapter.id,
         effectCount: providerEffectCount,
         executions: Object.values(this.state.provider.executions).map((execution) => ({
           operationId: execution.operationId,
@@ -353,15 +354,13 @@ export class DeploySealBroker {
   }
 
   async prove(operation, digest, proofHash) {
-    const proof = this.proofVerifier
-      ? await this.proofVerifier({
-          core: operation.core,
-          operationDigest: digest,
-          policyRoot: this.state.policy.root,
-          policy: this.policy,
-          evidence: this.evidence,
-        })
-      : { status: 'verified', kind: 'local-policy-emulator', hash: proofHash }
+    const proof = await this.proofVerifier({
+      core: operation.core,
+      operationDigest: digest,
+      policyRoot: this.state.policy.root,
+      policy: this.policy,
+      evidence: this.evidence,
+    })
     if (!proof || proof.status !== 'verified') return null
     if (proof.policyRoot && proof.policyRoot !== this.state.policy.root) {
       throw Object.assign(new Error('Midnight proof uses a different policy root'), { code: 'POLICY_ROOT_MISMATCH' })
@@ -388,16 +387,16 @@ export class DeploySealBroker {
 
       const core =
         scenario === 'invalid'
-          ? makeOperationCore({ targetId: 'unauthorized-stack' })
+          ? makeOperationCore({ targetId: 'unauthorized-stack' }, this.policy, this.evidence)
           : makeOperationCore({
               repositoryId: this.evidence.repositoryId,
               ...(this.evidence.runId === undefined ? {} : { runId: this.evidence.runId }),
               ...(this.evidence.runAttempt === undefined ? {} : { runAttempt: this.evidence.runAttempt }),
               commitSha: this.evidence.commitSha,
               artifactDigest: this.evidence.artifactDigest,
-              providerId: this.providerAdapter?.id || this.policy.allowedProviderId,
-              targetId: this.providerAdapter?.stackName || this.policy.allowedTargetId,
-            })
+              providerId: this.providerAdapter.id,
+              targetId: this.providerAdapter.stackName,
+            }, this.policy, this.evidence)
       const result = evaluatePolicy(core, this.evidence, this.policy)
       if (!result.ok) {
         this.state.lastAttempt = {
@@ -408,12 +407,6 @@ export class DeploySealBroker {
         }
         this.save()
         return { accepted: false, code: 'POLICY_NOT_SATISFIED', snapshot: this.snapshot() }
-      }
-
-      if (this.providerAdapter && !this.proofVerifier) {
-        this.state.lastAttempt = { type: scenario, status: 'rejected', code: 'PROOF_REQUIRED', at: now() }
-        this.save()
-        return { accepted: false, code: 'PROOF_REQUIRED', snapshot: this.snapshot() }
       }
 
       const digest = operationDigest(core)
@@ -442,10 +435,10 @@ export class DeploySealBroker {
         operationId: id,
         operationDigest: digest.toString('hex'),
         operationNullifier: operationNullifier(core).toString('hex'),
-        permitHash: permitHash(core, this.policy, this.evidence).toString('hex'),
-        status: this.proofVerifier ? 'PROOF_SUBMITTING' : 'RESERVED',
+        permitHash: permitHash(core, this.policy, this.evidence, this.policySalt).toString('hex'),
+        status: 'PROOF_SUBMITTING',
         gates: result.gates,
-        proof: this.proofVerifier ? { status: 'pending', kind: 'midnight-authorization', hash: proofHash } : await this.prove({ core }, digest, proofHash),
+        proof: { status: 'pending', kind: 'midnight-authorization', hash: proofHash },
         timeline: [],
         provider: null,
         receipt: null,
@@ -453,39 +446,32 @@ export class DeploySealBroker {
         receiptSignature: null,
         createdAt: now(),
       }
-      if (this.proofVerifier) {
-        addTimeline(operation, 'proof-submitting', 'Private policy proof is being submitted')
-      } else {
-        addTimeline(operation, 'proof', 'Private policy proof accepted')
-        addTimeline(operation, 'reserved', 'Midnight authorization reserved')
-      }
+      addTimeline(operation, 'proof-submitting', 'Private policy proof is being submitted')
       this.state.operations[id] = operation
       this.save()
       onAccepted?.(this.snapshot())
 
-      if (this.proofVerifier) {
-        let proof
-        try {
-          proof = await this.prove(operation, digest, proofHash)
-        } catch (error) {
-          operation.status = 'RECOVERY_REQUIRED'
-          addTimeline(operation, 'proof-unknown', 'Midnight response is unknown; recovery required')
-          this.state.lastAttempt = { type: scenario, status: 'interrupted', code: 'PROOF_RESPONSE_UNKNOWN', at: now() }
-          this.save()
-          return { accepted: true, interrupted: true, snapshot: this.snapshot() }
-        }
-        if (!proof) {
-          delete this.state.operations[id]
-          this.state.lastAttempt = { type: scenario, status: 'rejected', code: 'PROOF_NOT_VERIFIED', at: now() }
-          this.save()
-          return { accepted: false, code: 'PROOF_NOT_VERIFIED', snapshot: this.snapshot() }
-        }
-        operation.proof = proof
-        operation.status = 'RESERVED'
-        addTimeline(operation, 'proof', 'Private policy proof accepted')
-        addTimeline(operation, 'reserved', 'Midnight authorization reserved')
+      let proof
+      try {
+        proof = await this.prove(operation, digest, proofHash)
+      } catch (error) {
+        operation.status = 'RECOVERY_REQUIRED'
+        addTimeline(operation, 'proof-unknown', 'Midnight response is unknown; recovery required')
+        this.state.lastAttempt = { type: scenario, status: 'interrupted', code: 'PROOF_RESPONSE_UNKNOWN', at: now() }
         this.save()
+        return { accepted: true, interrupted: true, snapshot: this.snapshot() }
       }
+      if (!proof) {
+        delete this.state.operations[id]
+        this.state.lastAttempt = { type: scenario, status: 'rejected', code: 'PROOF_NOT_VERIFIED', at: now() }
+        this.save()
+        return { accepted: false, code: 'PROOF_NOT_VERIFIED', snapshot: this.snapshot() }
+      }
+      operation.proof = proof
+      operation.status = 'RESERVED'
+      addTimeline(operation, 'proof', 'Private policy proof accepted')
+      addTimeline(operation, 'reserved', 'Midnight authorization reserved')
+      this.save()
 
       operation.status = 'SUBMITTING'
       addTimeline(operation, 'submitting', 'Provider request persisted with operation token')
@@ -504,9 +490,9 @@ export class DeploySealBroker {
         this.save()
         return { accepted: true, snapshot: this.snapshot() }
       } catch (error) {
-        if (error.code !== 'RESPONSE_LOST' && !this.providerAdapter) throw error
+        if (error.code !== 'RESPONSE_LOST' && !error.retryable) throw error
         operation.status = 'RECOVERY_REQUIRED'
-        addTimeline(operation, 'lost', this.providerAdapter ? 'Provider response is unknown; recovery required' : 'Response lost after provider acceptance')
+        addTimeline(operation, 'lost', 'Provider response is unknown; recovery required')
         this.state.lastAttempt = {
           type: scenario,
           status: 'interrupted',
@@ -521,45 +507,25 @@ export class DeploySealBroker {
 
   async executeProvider(operation, loseResponse = false) {
     const existing = this.state.provider.executions[operation.operationId]
-    if (existing && (!this.providerAdapter || existing.status !== 'PENDING')) return { ...existing, reused: true }
+    if (existing && existing.status !== 'PENDING') return { ...existing, reused: true }
 
-    if (this.providerAdapter) {
-      const execution = await this.providerAdapter.execute({
-        operationId: operation.operationId,
-        operation,
-      })
-      const persisted = { ...execution, operationId: operation.operationId }
-      if (loseResponse && this.crashProcess) {
-        this.crashProcess(process.pid, 'SIGKILL')
-        await new Promise(() => {})
-      }
-      this.state.provider.executions[operation.operationId] = persisted
-      this.save()
-      if (loseResponse) {
-        const lost = new Error('provider accepted the operation but the response was lost')
-        lost.code = 'RESPONSE_LOST'
-        throw lost
-      }
-      return persisted
-    }
-
-    const execution = {
+    const execution = await this.providerAdapter.execute({
       operationId: operation.operationId,
-      providerOperationId: `cf-local-${operation.operationId.slice(0, 12)}`,
-      actualTarget: operation.core.targetId,
-      actualArtifactDigest: operation.core.artifactDigest,
-      status: 'SUCCEEDED',
-      completedAt: now(),
+      operation,
+    })
+    const persisted = { ...execution, operationId: operation.operationId }
+    if (loseResponse && this.crashProcess) {
+      this.crashProcess(process.pid, 'SIGKILL')
+      await new Promise(() => {})
     }
-    this.state.provider.executions[operation.operationId] = execution
+    this.state.provider.executions[operation.operationId] = persisted
     this.save()
-
     if (loseResponse) {
       const error = new Error('provider accepted the operation but the response was lost')
       error.code = 'RESPONSE_LOST'
       throw error
     }
-    return execution
+    return persisted
   }
 
   async finalize(operation, execution) {
@@ -594,6 +560,14 @@ export class DeploySealBroker {
       }
     } else {
       if (this.receiptSigner?.keyUrl) await this.receiptSigner.keyUrl()
+      const providerEvidenceHash = execution.providerEvidenceHash || execution.cloudTrailEventHash
+      if (!/^[0-9a-f]{64}$/u.test(providerEvidenceHash || '')) {
+        throw Object.assign(new Error('provider evidence hash is required before signing a receipt'), { code: 'PROVIDER_EVIDENCE_REQUIRED' })
+      }
+      const enclaveMeasurement = execution.enclaveMeasurement || process.env.DEPLOYSEAL_ENCLAVE_MEASUREMENT
+      if (!enclaveMeasurement) {
+        throw Object.assign(new Error('DEPLOYSEAL_ENCLAVE_MEASUREMENT is required before signing a receipt'), { code: 'ENCLAVE_MEASUREMENT_REQUIRED' })
+      }
       receipt = {
         version: execution.actualTargetResourceId ? 2 : 1,
         operationDigest: operation.operationDigest,
@@ -606,46 +580,41 @@ export class DeploySealBroker {
         actualArtifactDigest: execution.actualArtifactDigest,
         status: execution.status,
         providerCompletionTime: execution.completedAt,
-        receiptKeyId: this.receiptSigner?.id || this.state.receiptKey.id,
-        providerEvidenceHash: execution.providerEvidenceHash || execution.cloudTrailEventHash || sha256Hex(JSON.stringify(execution)),
-        enclaveMeasurement:
-          execution.enclaveMeasurement || (this.providerAdapter ? process.env.DEPLOYSEAL_ENCLAVE_MEASUREMENT || 'unconfigured' : 'local-emulator'),
+        receiptKeyId: this.receiptSigner.id,
+        providerEvidenceHash,
+        enclaveMeasurement,
       }
       hash = receiptHash(receipt)
-      signature = this.receiptSigner
-        ? (await this.receiptSigner.sign(Buffer.from(hash, 'hex'), receipt.receiptKeyId)).toString('base64')
-        : sign(null, Buffer.from(hash, 'hex'), this.state.receiptKey.privateKey).toString('base64')
+      signature = (await this.receiptSigner.sign(Buffer.from(hash, 'hex'), receipt.receiptKeyId)).toString('base64')
       operation.provider = execution
       operation.receipt = receipt
       operation.receiptHash = hash
       operation.receiptSignature = signature
       operation.status = 'RECEIPT_SIGNED'
       addTimeline(operation, 'provider-result', succeeded ? 'Provider reports one accepted effect' : 'Provider rejected the operation')
-      addTimeline(operation, 'receipt-signed', this.receiptSigner ? `Receipt signed by ${this.providerAdapter?.id === 'azure-arm' ? 'Azure Key Vault' : 'AWS KMS'}` : 'Receipt signed by local key emulator')
+      addTimeline(operation, 'receipt-signed', `Receipt signed by ${this.providerAdapter.id === 'azure-arm' ? 'Azure Key Vault' : this.providerAdapter.id === 'aws-cloudformation' ? 'AWS KMS' : this.receiptSigner.id}`)
       this.save()
     }
 
-    if (this.finalizeVerifier) {
-      if (!operation.compactFinalization) {
-        const finalization = await this.finalizeVerifier({
-          core: operation.core,
-          evidence: this.evidence,
-          operation,
-          policy: this.policy,
-          proof: operation.proof,
-          receipt,
-          receiptHash: hash,
-          policyRoot: this.state.policy.root,
+    if (!operation.compactFinalization) {
+      const finalization = await this.finalizeVerifier({
+        core: operation.core,
+        evidence: this.evidence,
+        operation,
+        policy: this.policy,
+        proof: operation.proof,
+        receipt,
+        receiptHash: hash,
+        policyRoot: this.state.policy.root,
+      })
+      if (!finalization || finalization.status !== 'verified') {
+        throw Object.assign(new Error('Compact receipt finalization was not verified'), {
+          code: 'COMPACT_FINALIZE_FAILED',
         })
-        if (!finalization || finalization.status !== 'verified') {
-          throw Object.assign(new Error('Compact receipt finalization was not verified'), {
-            code: 'COMPACT_FINALIZE_FAILED',
-          })
-        }
-        operation.compactFinalization = { ...finalization, receiptHash: hash }
-        addTimeline(operation, 'midnight-finalized', 'Midnight receipt hash finalized')
-        this.save()
       }
+      operation.compactFinalization = { ...finalization, receiptHash: hash }
+      addTimeline(operation, 'midnight-finalized', 'Midnight receipt hash finalized')
+      this.save()
     }
     if (operation.status !== 'FINALIZED' && operation.status !== 'FAILED') {
       operation.status = succeeded ? 'FINALIZED' : 'FAILED'
@@ -668,9 +637,6 @@ export class DeploySealBroker {
       onAccepted?.(this.snapshot())
 
       if (['PROOF_SUBMITTING', 'RECOVERY_REQUIRED'].includes(operation.status) && operation.proof?.status !== 'verified') {
-        if (!this.proofVerifier) {
-          return { accepted: false, code: 'PROOF_REQUIRED', snapshot: this.snapshot() }
-        }
         let proof
         try {
           proof = await this.prove(
@@ -707,7 +673,7 @@ export class DeploySealBroker {
       let execution
       if (operation.status === 'RECEIPT_SIGNED') {
         execution = operation.provider
-      } else if (this.providerAdapter) {
+      } else {
         const queried = await this.providerAdapter.query({
           operationId: operation.operationId,
           operation,
@@ -751,7 +717,7 @@ export class DeploySealBroker {
     })
   }
 
-  async disclose(fields = [], { purpose = 'demo-audit', recipientId = 'audit-console' } = {}) {
+  async disclose(fields = [], { purpose = 'release-audit', recipientId = 'audit-console' } = {}) {
     return this.exclusive(async () => {
       const operation = this.currentOperation()
       if (!operation?.receipt || operation.status !== 'FINALIZED') return { accepted: false, code: 'NO_FINALIZED_OPERATION', snapshot: this.snapshot() }
@@ -776,10 +742,8 @@ export class DeploySealBroker {
         fields: selected,
         values,
       })
-      const signature = this.receiptSigner
-        ? (await this.receiptSigner.sign(Buffer.from(bundleHash, 'hex'), operation.receipt.receiptKeyId)).toString('base64')
-        : sign(null, Buffer.from(bundleHash, 'hex'), this.state.receiptKey.privateKey).toString('base64')
-      const keyId = operation.receipt.receiptKeyId || this.receiptSigner?.id || this.state.receiptKey.id
+      const signature = (await this.receiptSigner.sign(Buffer.from(bundleHash, 'hex'), operation.receipt.receiptKeyId)).toString('base64')
+      const keyId = operation.receipt.receiptKeyId
       this.state.audit.push({ fields: selected, bundleHash, signature, keyId, purpose, recipientId, at: now() })
       this.save()
       return {
@@ -816,9 +780,11 @@ export class DeploySealBroker {
       }
       if (Object.keys(disclosure.values).some((field) => !selected.has(field))) return { valid: false, code: 'INVALID_DISCLOSURE_SCOPE', snapshot: this.snapshot() }
       const expectedHash = disclosureHash(disclosure)
-      const signatureValid = this.receiptSigner
-        ? await this.receiptSigner.verify(Buffer.from(expectedHash, 'hex'), Buffer.from(disclosure.signature, 'base64'), disclosure.keyId)
-        : verify(null, Buffer.from(expectedHash, 'hex'), this.state.receiptKey.publicKey, Buffer.from(disclosure.signature, 'base64'))
+      const signatureValid = await this.receiptSigner.verify(
+        Buffer.from(expectedHash, 'hex'),
+        Buffer.from(disclosure.signature, 'base64'),
+        disclosure.keyId,
+      )
       return { valid: expectedHash === disclosure.bundleHash && signatureValid, bundleHash: disclosure.bundleHash, keyId: disclosure.keyId, snapshot: this.snapshot() }
     })
   }
@@ -831,18 +797,15 @@ export class DeploySealBroker {
       }
       const computedHash = receiptHash(operation.receipt)
       const hashMatches = computedHash === operation.receiptHash
-      const signatureValid = this.receiptSigner
-        ? await this.receiptSigner.verify(Buffer.from(computedHash, 'hex'), Buffer.from(operation.receiptSignature, 'base64'), operation.receipt.receiptKeyId)
-        : verify(
-            null,
-            Buffer.from(computedHash, 'hex'),
-            this.state.receiptKey.publicKey,
-            Buffer.from(operation.receiptSignature, 'base64'),
-          )
+      const signatureValid = await this.receiptSigner.verify(
+        Buffer.from(computedHash, 'hex'),
+        Buffer.from(operation.receiptSignature, 'base64'),
+        operation.receipt.receiptKeyId,
+      )
       return {
         valid: hashMatches && signatureValid,
         receiptHash: operation.receiptHash,
-        keyId: operation.receipt.receiptKeyId || this.receiptSigner?.id || this.state.receiptKey.id,
+        keyId: operation.receipt.receiptKeyId,
         snapshot: this.snapshot(),
       }
     })
@@ -860,21 +823,10 @@ export class DeploySealBroker {
           receipt: operation.receipt,
           receiptHash: operation.receiptHash,
           signature: operation.receiptSignature,
-          publicKey: this.receiptSigner ? null : this.state.receiptKey.publicKey,
+          publicKey: null,
           keyId: operation.receipt.receiptKeyId,
         },
       }
-    })
-  }
-
-  async reset() {
-    return this.exclusive(async () => {
-      if (this.providerAdapter) {
-        return { accepted: false, code: 'RESET_DISABLED_FOR_REAL_PROVIDER', snapshot: this.snapshot() }
-      }
-      this.state = initialState(this.policy, this.evidence, this.receiptSigner)
-      this.save()
-      return this.snapshot()
     })
   }
 

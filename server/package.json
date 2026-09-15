@@ -18,7 +18,6 @@
     "@aws-sdk/client-kms": "3.1131.0",
     "@azure/identity": "4.13.2",
     "@deployseal/deployseal-contract": "file:../contracts/deployseal",
-    "@midnight-ntwrk/compact-runtime": "0.16.0",
     "cbor2": "^2.3.0"
   }
 }

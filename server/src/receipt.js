@@ -9,7 +9,7 @@ export function receiptBundleFromState(state) {
     receipt: operation.receipt,
     receiptHash: operation.receiptHash,
     signature: operation.receiptSignature,
-    publicKey: state.receiptKey?.publicKey || null,
+    publicKey: null,
     keyId: operation.receipt.receiptKeyId,
   }
 }
