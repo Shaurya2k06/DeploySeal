@@ -313,7 +313,6 @@ export class AzureKeyVaultReceiptSigner {
       .then((key) => {
         const id = key?.key?.kid || key?.kid
         if (!id) throw error('AZURE_KEY_NOT_FOUND', 'Azure Key Vault did not return a key id')
-        this.id = id
         return id
       })
     return this.keyUrlPromise
@@ -333,7 +332,6 @@ export class AzureKeyVaultReceiptSigner {
       body: { alg: this.algorithm, value: encodeBase64Url(message) },
     })
     if (!response?.value) throw error('AZURE_KEY_NO_SIGNATURE', 'Azure Key Vault returned no receipt signature')
-    if (response.kid) this.id = response.kid
     return decodeBase64Url(response.value)
   }
 
