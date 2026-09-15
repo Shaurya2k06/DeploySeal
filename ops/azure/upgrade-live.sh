@@ -5,6 +5,14 @@ repo=/opt/deployseal
 env_file=/etc/deployseal/server.env
 secret_dir=/etc/deployseal/secrets
 
+az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
+for name in contract-address server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key; do
+  if ! az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query id --output tsv --only-show-errors >/dev/null; then
+    printf 'missing required Azure Key Vault secret: %s\n' "$name" >&2
+    exit 1
+  fi
+done
+
 install -d -o deployseal -g deployseal -m 0750 "$secret_dir" /var/lib/deployseal/midnight
 install -d -o root -g deployseal -m 0750 /var/lib/deployseal/attestation
 git -c safe.directory="$repo" -C "$repo" stash push --quiet --message deployseal-generated-lock -- client/package-lock.json contracts/deployseal/package-lock.json server/package-lock.json
@@ -42,7 +50,6 @@ set_env DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS 300
 chmod 0640 "$env_file"
 chown root:deployseal "$env_file"
 
-az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 for name in contract-address server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key; do
   temporary="$secret_dir/$name.tmp.$$"
   az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query value --output tsv --only-show-errors >"$temporary"

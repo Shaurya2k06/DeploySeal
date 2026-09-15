@@ -108,6 +108,18 @@ jobs:
           az keyvault secret set --vault-name "$AZURE_KEY_VAULT" --name build-fact-json --file "$RUNNER_TEMP/build-fact.json" --only-show-errors >/dev/null
           az keyvault secret set --vault-name "$AZURE_KEY_VAULT" --name build-adapter-public-key --file "$RUNNER_TEMP/deployseal-adapter-key.pub.pem" --only-show-errors >/dev/null
 
+      - name: Check signed EvidenceFacts before rollout
+        if: ${{ vars.DEPLOYSEAL_AZURE_DEPLOY_ENABLED == 'true' }}
+        env:
+          AZURE_KEY_VAULT: deploysealkv260912
+        run: |
+          for name in evidence-facts-json evidence-adapter-public-key; do
+            if ! az keyvault secret show --vault-name "$AZURE_KEY_VAULT" --name "$name" --query id --output tsv --only-show-errors >/dev/null; then
+              echo "Missing Azure Key Vault secret: $name. Publish the real signed EvidenceFacts bundle before enabling rollout."
+              exit 1
+            fi
+          done
+
       - name: Roll the Azure broker to this commit
         if: ${{ vars.DEPLOYSEAL_AZURE_DEPLOY_ENABLED == 'true' }}
         env:
