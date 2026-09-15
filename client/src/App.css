@@ -413,6 +413,13 @@ code {
   color: #fff;
 }
 
+.landing-reveal {
+  display: inline-block;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
 .landing-hero .lede {
   max-width: 620px;
   color: rgba(7, 7, 9, .72);

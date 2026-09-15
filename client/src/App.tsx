@@ -17,6 +17,7 @@ import {
 import Lenis from 'lenis'
 import 'lenis/dist/lenis.css'
 import './App.css'
+import { DiaTextReveal } from './DiaTextReveal'
 
 type Gate = {
   id: string
@@ -383,7 +384,7 @@ function LandingPage() {
       <main className="landing-main">
         <section className="landing-hero" data-aos="fade-up">
           <div className="landing-hero-inner">
-            <h1>Private policy.<br /><em>Public proof.</em></h1>
+            <h1>Private policy.<br /><DiaTextReveal className="landing-reveal" colors={['#2597d0', '#d7e6f5', '#fff']} text="Public proof." textColor="#fff" /></h1>
             <p className="lede">Ship regulated software without putting the policy on display. DeploySeal turns private evidence into one authorized cloud effect and one verifiable receipt.</p>
             <div className="hero-actions">
               <a className="button button-primary" href="/demo">Run the live demo <span aria-hidden="true">↗</span></a>
