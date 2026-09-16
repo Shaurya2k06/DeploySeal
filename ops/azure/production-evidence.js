@@ -50,7 +50,8 @@ function check(command, args, cwd = repo) {
 }
 
 function publicKeyPem(jwk) {
-  return createPublicKey({ key: jwk, format: 'jwk' }).export({ format: 'pem', type: 'spki' }).toString()
+  const publicJwk = Object.fromEntries(Object.entries(jwk).filter(([, value]) => value !== null))
+  return createPublicKey({ key: publicJwk, format: 'jwk' }).export({ format: 'pem', type: 'spki' }).toString()
 }
 
 function signWithIssuer(issuer, digest) {
@@ -63,7 +64,8 @@ function signWithIssuer(issuer, digest) {
     'keyvault', 'key', 'show', '--vault-name', issuer.keyVault.name, '--name', issuer.keyVault.keyName,
     '--query', 'key', '--output', 'json',
   ]), `public key ${issuer.keyId}`)
-  const publicKey = createPublicKey({ key, format: 'jwk' })
+  const publicJwk = Object.fromEntries(Object.entries(key).filter(([, value]) => value !== null))
+  const publicKey = createPublicKey({ key: publicJwk, format: 'jwk' })
   const signature = Buffer.from(response.signature, 'base64')
   if (!verify(null, digest, publicKey, signature)) throw new Error(`signature verification failed for ${issuer.keyId}`)
   return { signature: signature.toString('base64'), publicKey: publicKeyPem(key) }
