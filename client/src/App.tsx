@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import AOS from 'aos'
 import 'aos/dist/aos.css'
 import {
@@ -186,6 +186,61 @@ function stageState(operation: Operation | null, eventId: string) {
   return events.has(eventId) ? 'complete' : 'pending'
 }
 
+type DemoStepState = 'pending' | 'active' | 'complete' | 'failed'
+
+function demoStepState(snapshot: Snapshot | null, operation: Operation | null, step: 'policy' | 'proof' | 'provider' | 'recovery' | 'receipt'): DemoStepState {
+  if (step === 'policy') return snapshot ? 'complete' : 'pending'
+  if (!operation) return 'pending'
+
+  const events = new Set(operation.timeline.map((event) => event.id))
+  if (step === 'proof') {
+    if (events.has('reserved')) return 'complete'
+    if (operation.status === 'FAILED') return 'failed'
+    return operation.status === 'PROOF_SUBMITTING' || operation.status === 'RECOVERY_REQUIRED' ? 'active' : 'pending'
+  }
+  if (step === 'provider') {
+    if (events.has('provider-result') || operation.provider.operationId) return 'complete'
+    if (operation.status === 'FAILED') return 'failed'
+    return operation.status === 'SUBMITTING' || operation.status === 'RECOVERY_REQUIRED' ? 'active' : 'pending'
+  }
+  if (step === 'recovery') {
+    if (events.has('recovered')) return 'complete'
+    if (operation.status === 'FAILED') return 'failed'
+    return ['SUBMITTING', 'RECOVERY_REQUIRED', 'RECEIPT_SIGNED'].includes(operation.status) ? 'active' : 'pending'
+  }
+  if (events.has('finalized') || operation.status === 'FINALIZED') return 'complete'
+  if (operation.status === 'FAILED') return 'failed'
+  return operation.status === 'RECEIPT_SIGNED' ? 'active' : 'pending'
+}
+
+function DemoIdentifier({ label, value, href }: { label: string; value: string | number | null | undefined; href?: string }) {
+  const display = value === null || value === undefined || value === '' ? '—' : String(value)
+  return (
+    <div className="demo-identifier">
+      <span>{label}</span>
+      {href && display !== '—' ? (
+        <a href={href} rel="noreferrer" target="_blank"><code>{display}</code><b aria-hidden="true">↗</b></a>
+      ) : <code>{display}</code>}
+    </div>
+  )
+}
+
+function DemoStep({ number, title, body, state, children }: { number: string; title: string; body: string; state: DemoStepState; children: ReactNode }) {
+  const status = state === 'complete' ? 'COMPLETE' : state === 'active' ? 'IN PROGRESS' : state === 'failed' ? 'FAILED' : 'WAITING'
+  return (
+    <article className={`demo-step demo-step-${state}`}>
+      <div className="demo-step-marker"><span>{number}</span><i aria-hidden="true">{state === 'complete' ? '✓' : state === 'active' ? '•' : state === 'failed' ? '!' : '·'}</i></div>
+      <div className="demo-step-body">
+        <div className="demo-step-heading">
+          <div><h2>{title}</h2><p>{body}</p></div>
+          <strong>{status}</strong>
+        </div>
+        {children}
+      </div>
+    </article>
+  )
+}
+
 function FlowSteps({ operation }: { operation: Operation | null }) {
   return (
     <div className="flow-steps">
@@ -249,24 +304,6 @@ function ExplorerLinks({ snapshot, detailed = false }: { snapshot: Snapshot | nu
     <div className="explorer-links">
       {links.map((link) => <ExplorerLink key={link.label} {...link} />)}
       {detailed && operation && !reserveTransaction && <p className="small-note">The reserve transaction receipt is not available yet.</p>}
-    </div>
-  )
-}
-
-function TransactionReceipts({ operation }: { operation: Operation | null }) {
-  const reserveReceipt = operation?.proof?.txHash || operation?.proof?.txId
-  const finalizeReceipt = operation?.finalizationTxHash || operation?.finalizationTxId
-  const receipts = [
-    reserveReceipt ? ['Reserve transaction', reserveReceipt] : null,
-    finalizeReceipt ? ['Finalize transaction', finalizeReceipt] : null,
-  ].filter((receipt): receipt is [string, string] => Boolean(receipt))
-
-  if (!receipts.length) return null
-
-  return (
-    <div className="tx-receipts">
-      <div className="card-top"><span className="mini-label">Transaction receipts</span><span className="gate-summary">{receipts.length} on-chain</span></div>
-      {receipts.map(([label, hash]) => <ExplorerLink key={label} label={label} value={short(hash, 14)} href={midnightTransactionUrl(hash)} />)}
     </div>
   )
 }
@@ -512,21 +549,49 @@ function LandingPage() {
   )
 }
 
+type ActionResult = {
+  accepted?: boolean
+  bundle?: Record<string, unknown>
+  code?: string
+  disclosure?: Disclosure
+  snapshot?: Snapshot
+  valid?: boolean
+}
+
 function DemoPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const [activeView, setActiveView] = useState<'release' | 'receipt' | 'audit'>('release')
+  const [runState, setRunState] = useState<'idle' | 'running'>('idle')
   const [selectedFields, setSelectedFields] = useState<string[]>(['policyEpoch', 'outcome'])
   const [disclosure, setDisclosure] = useState<Disclosure | null>(null)
   const [receiptState, setReceiptState] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
+  const previousOperationId = useRef<string | null>(null)
+  const runOperationId = useRef<string | null>(null)
+  const recoveryRequested = useRef(false)
 
   const operation = snapshot?.operation || null
-  const isFinal = operation?.status === 'FINALIZED'
   const isDone = operation?.status === 'FINALIZED' || operation?.status === 'FAILED'
   const isRecoverable = ['PROOF_SUBMITTING', 'RECOVERY_REQUIRED', 'SUBMITTING', 'RECEIPT_SIGNED'].includes(operation?.status || '')
-  const latestEvent = operation?.timeline.at(-1)
-  const progress = operation?.timeline.length || 0
+  const recoveredEvent = operation?.timeline.find(({ id }) => id === 'recovered')
+
+  const run = useCallback(async (path: string, body: unknown = {}, options: { suppressError?: boolean } = {}) => {
+    setBusy(path)
+    setError('')
+    try {
+      const result = await request<ActionResult>(path, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      if (result.snapshot) setSnapshot(result.snapshot)
+      return result
+    } catch (requestError) {
+      if (!options.suppressError) setError(requestError instanceof Error ? requestError.message : 'Request failed')
+      return null
+    } finally {
+      setBusy('')
+    }
+  }, [])
 
   useEffect(() => {
     request<Snapshot>('/api/release')
@@ -536,224 +601,215 @@ function DemoPage() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      request<Snapshot>('/api/release').then(setSnapshot).catch(() => undefined)
+      request<Snapshot>('/api/release').then((next) => {
+        if (runState === 'running' && next.operation && next.operation.operationId !== previousOperationId.current) {
+          runOperationId.current = next.operation.operationId
+        }
+        setSnapshot(next)
+      }).catch(() => undefined)
     }, 3000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [runState])
 
-  async function run(path: string, body?: unknown) {
-    setBusy(path)
-    setError('')
-    try {
-      const result = await request<{ snapshot?: Snapshot }>(path, {
-        method: 'POST',
-        body: JSON.stringify(body || {}),
+  useEffect(() => {
+    if (runState !== 'running' || !operation || operation.operationId !== runOperationId.current || recoveryRequested.current) return
+    const needsRecovery = ['SUBMITTING', 'RECOVERY_REQUIRED', 'RECEIPT_SIGNED'].includes(operation.status) && !operation.timeline.some(({ id }) => id === 'recovered')
+    if (!needsRecovery) return
+    const recoveryTimer = window.setTimeout(() => {
+      if (recoveryRequested.current) return
+      recoveryRequested.current = true
+      void run('/api/release/recover').then((result) => {
+        if (!result) {
+          recoveryRequested.current = false
+          setRunState('idle')
+        }
       })
-      if (result.snapshot) setSnapshot(result.snapshot)
-      return result
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Request failed')
-      return null
-    } finally {
-      setBusy('')
+    }, 0)
+    return () => window.clearTimeout(recoveryTimer)
+  }, [operation, run, runState])
+
+  useEffect(() => {
+    if (runState === 'running' && operation && operation.operationId === runOperationId.current && ['FINALIZED', 'FAILED'].includes(operation.status)) {
+      setRunState('idle')
     }
-  }
+  }, [operation, runState])
 
   async function primaryAction() {
-    if (isRecoverable) {
-      await run('/api/release/recover')
-    } else if (isDone) {
-      await run('/api/release/start', { scenario: 'crash' })
-      setDisclosure(null)
-      setReceiptState('idle')
-    } else {
-      await run('/api/release/start', { scenario: 'crash' })
+    if (runState === 'running') return
+    setError('')
+    recoveryRequested.current = false
+
+    if (isRecoverable && operation) {
+      previousOperationId.current = operation.operationId
+      runOperationId.current = operation.operationId
+      setRunState('running')
+      const result = await run('/api/release/recover')
+      if (!result) setRunState('idle')
+      return
+    }
+
+    previousOperationId.current = operation?.operationId || null
+    runOperationId.current = null
+    setDisclosure(null)
+    setReceiptState('idle')
+    setRunState('running')
+    const result = await run('/api/release/start', { scenario: 'crash' }, { suppressError: true })
+    if (result?.snapshot?.operation && result.snapshot.operation.operationId !== previousOperationId.current) {
+      runOperationId.current = result.snapshot.operation.operationId
+    }
+    if (result?.code === 'OPERATION_EXISTS') {
+      setError('The broker already has an active operation.')
+      setRunState('idle')
+    } else if (result && !result.snapshot && result.code) {
+      setError(result.code.replaceAll('_', ' '))
+      setRunState('idle')
     }
   }
 
   async function disclose() {
     const result = await run('/api/audit/disclose', { fields: selectedFields })
-    if (result && 'disclosure' in result) setDisclosure(result.disclosure as Disclosure)
+    if (result?.disclosure) setDisclosure(result.disclosure)
   }
 
   async function verifyReceipt() {
     setReceiptState('checking')
     const result = await run('/api/receipt/verify')
-    setReceiptState(result && 'valid' in result && result.valid ? 'valid' : 'invalid')
+    setReceiptState(result?.valid ? 'valid' : result ? 'invalid' : 'idle')
   }
 
   async function exportReceipt() {
-    setBusy('/api/receipt/export')
-    setError('')
-    try {
-      const result = await request<{ bundle?: Record<string, unknown> }>('/api/receipt/export', {
-        method: 'POST',
-        body: '{}',
-      })
-      if (!result.bundle) throw new Error('No receipt available')
-      const url = URL.createObjectURL(new Blob([JSON.stringify(result.bundle, null, 2)], { type: 'application/json' }))
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'deployseal-receipt.json'
-      link.click()
-      URL.revokeObjectURL(url)
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Request failed')
-    } finally {
-      setBusy('')
-    }
+    const result = await run('/api/receipt/export')
+    if (!result?.bundle) return
+    const url = URL.createObjectURL(new Blob([JSON.stringify(result.bundle, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'deployseal-receipt.json'
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   function toggleField(field: string) {
-    setSelectedFields((current) =>
-      current.includes(field) ? current.filter((item) => item !== field) : [...current, field],
-    )
+    setSelectedFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field])
     setDisclosure(null)
   }
 
+  const runLabel = runState === 'running' ? (isRecoverable ? 'Recovering…' : 'Running…') : isRecoverable ? 'Resume recovery' : isDone ? 'Run again' : 'Run end-to-end demo'
+  const runStatus = runState === 'running' ? (isRecoverable ? 'Recovering the same provider operation' : 'Waiting for the live release trace') : isDone ? `Last release ${operation?.status.toLowerCase()}` : isRecoverable ? 'Recovery is waiting' : snapshot ? 'Ready to run' : 'Connecting to broker'
+  const evidenceMode = snapshot?.evidence?.mode?.replace('-', ' ').toUpperCase() || '—'
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="DeploySeal home">
-          <Mark />
-          <span>Deploy<span>Seal</span></span>
-        </a>
-        <nav className="nav" aria-label="Primary navigation">
-          <a className="nav-link" href="/">Home</a>
-          {(['release', 'receipt', 'audit'] as const).map((view) => (
-            <button
-              className={activeView === view ? 'nav-active' : ''}
-              key={view}
-              onClick={() => setActiveView(view)}
-              type="button"
-            >
-              {view === 'release' ? 'Release' : view === 'receipt' ? 'Receipt' : 'Audit'}
-            </button>
-          ))}
-        </nav>
+    <div className="app-shell demo-shell">
+      <header className="topbar demo-topbar">
+        <a className="brand" href="/" aria-label="DeploySeal home"><Mark /><span>Deploy<span>Seal</span></span></a>
+        <span className="demo-topbar-label">LIVE END-TO-END DEMO</span>
+        <a className="button button-quiet demo-back" href="/">Landing <span aria-hidden="true">↗</span></a>
       </header>
 
-      <main id="top">
-        <section className="signal-row" aria-label="System status">
-          <div><span className="signal-label">Policy epoch</span><strong>{snapshot?.policy.epoch || '—'}</strong></div>
-          <div><span className="signal-label">Provider effects</span><strong>{snapshot?.provider.effectCount ?? '—'}</strong></div>
-          <div><span className="signal-label">Operation</span><strong>{operation ? short(operation.operationId, 6) : 'Awaiting release'}</strong></div>
-          <div><span className="signal-label">Last event</span><strong>{latestEvent ? latestEvent.label : 'Ready'}</strong></div>
-        </section>
-
-        <section className="demo-flow-section">
-          <div className="section-heading"><div><p className="eyebrow"><span>02</span> End-to-end trace</p><h2>Follow one operation.</h2></div><span className="tag">PUBLIC IDENTIFIERS</span></div>
-          <p className="demo-flow-copy">Run once to watch private policy proof, authorization, provider effect, recovery, and the signed receipt complete as one real operation.</p>
-          <div className="hero-actions demo-controls">
-            <button className="button button-primary" disabled={Boolean(busy)} onClick={primaryAction} type="button">
-              {busy ? 'Running…' : isRecoverable ? 'Finish demo' : isDone ? 'Run again' : 'Run end-to-end demo'}
-              <span aria-hidden="true">↗</span>
-            </button>
+      <main className="demo-main">
+        <section className="demo-header">
+          <div>
+            <p className="demo-kicker"><span>LIVE TRACE</span> {snapshot?.mode?.toUpperCase() || 'CONNECTING'}</p>
+            <h1>One release.<br /><em>One receipt.</em></h1>
+            <p className="demo-lede">Click once. DeploySeal proves the private policy, reserves the operation, reconciles Azure after a lost response, and returns the identifiers you can verify.</p>
           </div>
-          {error && <p className="error" role="alert">{error}</p>}
-          <FlowSteps operation={operation} />
-          <ExplorerLinks detailed snapshot={snapshot} />
-          <TransactionReceipts operation={operation} />
+          <div className="demo-run-control">
+            <button className="button button-primary" disabled={Boolean(busy) || runState === 'running'} onClick={primaryAction} type="button">{runLabel}<span aria-hidden="true">↗</span></button>
+            <span className="demo-run-status"><i className={runState === 'running' ? 'is-running' : ''} />{runStatus}</span>
+          </div>
         </section>
 
-        <section className={`workspace view-${activeView}`}>
-          <div className="main-column">
-            <div className="section-heading">
-              <div><p className="eyebrow"><span>03</span> {activeView === 'release' ? 'Private release' : activeView === 'receipt' ? 'Verifiable outcome' : 'Scoped disclosure'}</p><h2>{activeView === 'release' ? 'Release intent' : activeView === 'receipt' ? 'Receipt vault' : 'Audit bundle'}</h2></div>
-              <span className="tag">{operation ? operation.status.replace('_', ' ') : 'NOT STARTED'}</span>
+        {error && <p className="error demo-error" role="alert">{error}</p>}
+
+        <section className="demo-context" aria-label="Live release context">
+          <DemoIdentifier label="Provider" value={snapshot?.provider.id} />
+          <DemoIdentifier label="Policy epoch" value={snapshot?.policy.epoch} />
+          <DemoIdentifier label="Policy root" value={snapshot?.policy.root} />
+          <DemoIdentifier label="Issuer boundary" value={snapshot?.evidence ? `${evidenceMode} · ${snapshot.evidence.activeIssuerCount}/${snapshot.evidence.configuredIssuerCount}` : '—'} />
+        </section>
+
+        <section className="demo-steps" aria-label="End-to-end release steps">
+          <DemoStep number="01" title="Policy boundary" body="The broker loads the committed policy and verifies the registered evidence issuers." state={demoStepState(snapshot, operation, 'policy')}>
+            <div className="demo-id-grid">
+              <DemoIdentifier label="Policy root" value={snapshot?.policy.root} />
+              <DemoIdentifier label="Policy epoch" value={snapshot?.policy.epoch} />
+              <DemoIdentifier label="Evidence mode" value={evidenceMode} />
+              <DemoIdentifier label="Active issuers" value={snapshot?.evidence ? `${snapshot.evidence.activeIssuerCount} / ${snapshot.evidence.configuredIssuerCount}` : '—'} />
             </div>
+            <div className="demo-gate-row">
+              {operation?.gates.map((gate) => <span className={`demo-gate ${gate.status}`} key={gate.id}><i aria-hidden="true">{gate.status === 'verified' ? '✓' : '!'}</i>{gate.label}</span>)}
+              {!operation && <span className="demo-placeholder">Run the trace to evaluate the release gates.</span>}
+            </div>
+            {snapshot?.evidence?.issuers.length ? <div className="demo-issuer-grid">
+              {snapshot.evidence.issuers.map((issuer) => <div className="demo-issuer" key={issuer.keyId}>
+                <i className={issuer.active ? 'active' : ''} aria-hidden="true" />
+                <div><span>{issuer.role}</span><strong>{issuer.identityName}</strong><code>{issuer.keyId}</code><small>{issuer.vaultName}</small></div>
+              </div>)}
+            </div> : null}
+          </DemoStep>
 
-            {activeView === 'release' && (
-              operation ? (
-                <>
-                  <div className="intent-card">
-                    <div className="card-top"><span className="mini-label">Operation</span><span className="private-chip"><i /> PRIVATE INPUT</span></div>
-                    <div className="intent-line"><h3>{short(operation.operationId, 10)}</h3><span className="hash">{short(operation.operationDigest, 16)}</span></div>
-                    <div className="intent-meta">
-                      <div><span>Policy epoch</span><strong>{operation.policyEpoch}</strong></div>
-                      <div><span>Provider</span><strong>{operation.providerId}</strong></div>
-                      <div><span>Provider operation</span><strong>{operation.provider.operationId || 'pending'}</strong></div>
-                    </div>
-                  </div>
-                  <div className="gates-card">
-                    <div className="card-top"><span className="mini-label">Policy gates</span><span className="gate-summary">{operation.gates.filter((gate) => gate.status === 'verified').length} / {operation.gates.length} passed</span></div>
-                    <div className="gate-list">
-                      {operation.gates.map((gate) => (
-                        <div className="gate" key={gate.id}>
-                          <span className={`gate-icon ${gate.status}`} aria-hidden="true">{gate.status === 'verified' ? '✓' : '·'}</span>
-                          <span>{gate.label}</span>
-                          <span className="gate-status">{gate.status === 'verified' ? 'passed' : gate.status}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              ) : <div className="intent-card"><EmptyState title="Ready to run" body="Run the demo to create a real operation and stream its receipts." /></div>
-            )}
+          <DemoStep number="02" title="Midnight reserve" body="The private proof binds this release to one operation nullifier before Azure can act." state={demoStepState(snapshot, operation, 'proof')}>
+            <div className="demo-id-grid">
+              <DemoIdentifier label="Operation ID" value={operation?.operationId} />
+              <DemoIdentifier label="Operation digest" value={operation?.operationDigest} />
+              <DemoIdentifier label="Policy root" value={operation?.proof?.policyRoot || snapshot?.policy.root} />
+              <DemoIdentifier label="Nullifier" value={operation?.proof?.nullifier} />
+              <DemoIdentifier label="Reserve tx ID" value={operation?.proof?.txId} href={operation?.proof?.txId ? midnightTransactionUrl(operation.proof.txId) : undefined} />
+              <DemoIdentifier label="Reserve tx hash" value={operation?.proof?.txHash} href={operation?.proof?.txHash ? midnightTransactionUrl(operation.proof.txHash) : undefined} />
+            </div>
+          </DemoStep>
 
-            {activeView === 'receipt' && (
-              <div className="receipt-card">
-                {operation?.receipt ? (
-                  <>
-                    <div className="receipt-seal"><Mark small /><span>SIGNED RECEIPT</span></div>
-                    <div className="receipt-hash"><span>Receipt hash</span><code>{short(operation.receipt.hash, 18)}</code></div>
-                    <div className="receipt-grid">
-                      <div><span>Operation</span><strong>{short(operation.operationId, 10)}</strong></div>
-                      <div><span>Provider operation</span><strong>{operation.provider.operationId}</strong></div>
-                      <div><span>Signing key</span><strong>{operation.receipt.keyId}</strong></div>
-                      <div><span>Outcome</span><strong className="success-text">{operation.receipt.status}</strong></div>
-                    </div>
-                    <button className="button button-secondary" disabled={busy === '/api/receipt/verify'} onClick={verifyReceipt} type="button">
-                      {receiptState === 'checking' ? 'Checking signature…' : receiptState === 'valid' ? 'Signature verified ✓' : 'Verify signature'}
-                    </button>
-                    <button className="button button-outline" disabled={Boolean(busy)} onClick={exportReceipt} type="button">Export receipt bundle ↗</button>
-                    <p className="small-note">{snapshot?.mode === 'aws-cloudformation' ? 'AWS KMS signs the canonical receipt after provider reconciliation.' : snapshot?.mode === 'azure-arm' ? 'Azure Key Vault signs the canonical receipt after the resource-group effect is reconciled.' : 'The configured receipt signer signs the canonical provider outcome.'}</p>
-                  </>
-                ) : <EmptyState title="No receipt yet" body="Run the release path to mint a signed provider receipt." />}
+          <DemoStep number="03" title="Azure effect" body="Azure receives the same operation ID as its deployment name and idempotency token." state={demoStepState(snapshot, operation, 'provider')}>
+            <div className="demo-id-grid">
+              <DemoIdentifier label="Azure deployment resource ID" value={operation?.provider.operationId} href={operation?.provider.operationId ? azureResourceUrl(operation.provider.operationId) : undefined} />
+              <DemoIdentifier label="Request token" value={operation?.provider.requestToken} />
+              <DemoIdentifier label="Provider" value={operation?.providerId} />
+              <DemoIdentifier label="Effects recorded" value={snapshot?.provider.effectCount} />
+            </div>
+          </DemoStep>
+
+          <DemoStep number="04" title="Crash-safe recovery" body="The demo drops the first response on purpose; the browser automatically queries the original provider operation." state={demoStepState(snapshot, operation, 'recovery')}>
+            <div className="demo-id-grid">
+              <DemoIdentifier label="Recovery result" value={snapshot?.lastAttempt?.code || (recoveredEvent ? 'RECOVERED' : undefined)} />
+              <DemoIdentifier label="Token binding" value={operation ? operation.provider.requestToken === operation.operationId ? 'MATCH · no duplicate' : 'MISMATCH' : undefined} />
+              <DemoIdentifier label="Recovered at" value={recoveredEvent ? time(recoveredEvent.at) : undefined} />
+              <DemoIdentifier label="Effect count after recovery" value={snapshot?.provider.effectCount} />
+            </div>
+          </DemoStep>
+
+          <DemoStep number="05" title="Signed receipts" body="Key Vault signs the Azure outcome and Midnight finalizes the receipt hash on-chain." state={demoStepState(snapshot, operation, 'receipt')}>
+            {operation?.receipt ? <>
+              <div className="demo-id-grid">
+                <DemoIdentifier label="Receipt hash" value={operation.receipt.hash} />
+                <DemoIdentifier label="Receipt signing key" value={operation.receipt.keyId} />
+                <DemoIdentifier label="Receipt status" value={operation.receipt.status} />
+                <DemoIdentifier label="Finalize tx ID" value={operation.finalizationTxId} href={operation.finalizationTxId ? midnightTransactionUrl(operation.finalizationTxId) : undefined} />
+                <DemoIdentifier label="Finalize tx hash" value={operation.finalizationTxHash} href={operation.finalizationTxHash ? midnightTransactionUrl(operation.finalizationTxHash) : undefined} />
+                <DemoIdentifier label="Contract address" value={snapshot?.contractAddress} href={snapshot?.contractAddress ? midnightContractUrl(snapshot.contractAddress) : undefined} />
               </div>
-            )}
-
-            {activeView === 'audit' && (
-              <div className="audit-card">
-                <div className="audit-intro"><span className="audit-icon">◫</span><div><h3>Choose what to disclose</h3><p>Only selected fields leave the private evidence bundle.</p></div></div>
-                <div className="audit-options">
-                  {auditOptions.map(([field, label]) => (
-                    <label className="audit-option" key={field}>
-                      <input checked={selectedFields.includes(field)} onChange={() => toggleField(field)} type="checkbox" />
-                      <span className="checkbox-mark">✓</span><span>{label}</span>
-                    </label>
-                  ))}
+              <div className="demo-receipt-actions">
+                <button className="button button-secondary" disabled={busy === '/api/receipt/verify'} onClick={verifyReceipt} type="button">{receiptState === 'checking' ? 'Checking…' : receiptState === 'valid' ? 'Signature verified ✓' : 'Verify signature'}</button>
+                <button className="button button-outline" disabled={Boolean(busy)} onClick={exportReceipt} type="button">Export receipt bundle ↗</button>
+              </div>
+              <details className="demo-disclosure">
+                <summary>Generate scoped audit disclosure</summary>
+                <div className="demo-disclosure-body">
+                  <div className="demo-field-options">{auditOptions.map(([field, label]) => <label key={field}><input checked={selectedFields.includes(field)} onChange={() => toggleField(field)} type="checkbox" /><span>{label}</span></label>)}</div>
+                  <button className="button button-outline" disabled={Boolean(busy)} onClick={disclose} type="button">Create scoped bundle <span aria-hidden="true">↗</span></button>
+                  {disclosure && <div className="demo-disclosure-result"><DemoIdentifier label="Bundle hash" value={disclosure.bundleHash} /><code>{disclosure.fields.map((field) => `${field}=${String(disclosure.values[field])}`).join(' · ')}</code></div>}
                 </div>
-                <button className="button button-secondary" disabled={!operation || Boolean(busy)} onClick={disclose} type="button">Create scoped bundle <span>↗</span></button>
-                {disclosure && <div className="disclosure-result"><div><span>Bundle hash</span><code>{short(disclosure.bundleHash, 16)}</code></div><div className="disclosed-values">{disclosure.fields.map((field) => <span key={field}><b>{field}</b>{String(disclosure.values[field])}</span>)}</div></div>}
-                {!operation && <p className="small-note">A release must be finalized before an audit bundle can be created.</p>}
-              </div>
-            )}
-          </div>
-
-          <aside className="timeline-card">
-            <div className="card-top"><span className="mini-label">Operation timeline</span><span className="progress-count">{progress} events</span></div>
-            <div className="timeline-list">
-              {operation?.timeline.length ? operation.timeline.map((event) => (
-                <div className="timeline-event" key={`${event.id}-${event.at}`}><span className="timeline-dot done">✓</span><div><strong>{event.label}</strong><span>{time(event.at)}</span></div></div>
-              )) : <p className="timeline-empty">Run the demo to stream the real operation timeline.</p>}
-            </div>
-            <div className="timeline-footer"><span className="pulse" />{isRecoverable ? 'Recovery required' : isFinal ? 'Operation complete' : isDone ? 'Operation failed' : 'Ready to run'}<span className="footer-line" /></div>
-          </aside>
+              </details>
+            </> : <p className="demo-placeholder">The receipt identifiers will appear here after the live operation finalizes.</p>}
+          </DemoStep>
         </section>
 
-        <section className="attack-panel">
-          <div><p className="eyebrow"><span>04</span> Adversarial check</p><h2>Trust, but retry.</h2><p>Test the two failure modes that matter: a policy mismatch stops before the provider, and a replay cannot mint a second effect.</p></div>
-          <div className="attack-actions"><button className="button button-outline" disabled={Boolean(busy)} onClick={() => run('/api/release/start', { scenario: 'invalid' })} type="button">Block wrong target <span>↗</span></button><button className="button button-outline" disabled={!operation || Boolean(busy)} onClick={() => run('/api/release/replay')} type="button">Reject replay <span>↗</span></button></div>
-          {snapshot?.lastAttempt && <div className="attempt-result"><span>Last attempt</span><strong>{snapshot.lastAttempt.code.replaceAll('_', ' ')}</strong><small>{time(snapshot.lastAttempt.at)}</small></div>}
+        <section className="demo-safety" aria-label="Optional safety checks">
+          <div><span>Optional checks</span><p>Exercise the rejection paths after the main trace.</p></div>
+          <div className="demo-safety-actions"><button className="button button-outline" disabled={Boolean(busy)} onClick={() => run('/api/release/start', { scenario: 'invalid' })} type="button">Block wrong target</button><button className="button button-outline" disabled={!operation || Boolean(busy)} onClick={() => run('/api/release/replay')} type="button">Reject replay</button></div>
+          {snapshot?.lastAttempt && <code>{snapshot.lastAttempt.code} · {time(snapshot.lastAttempt.at)}</code>}
         </section>
       </main>
     </div>
   )
-}
-
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return <div className="empty-state"><span>◌</span><h3>{title}</h3><p>{body}</p></div>
 }
 
 function App() {
