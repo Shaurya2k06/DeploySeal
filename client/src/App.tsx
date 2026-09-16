@@ -220,7 +220,8 @@ function demoStepState(snapshot: Snapshot | null, operation: Operation | null, s
 
 function demoSnapshot(snapshot: Snapshot, operationId: string | null): Snapshot {
   const operation = operationId && snapshot.operation?.operationId === operationId ? snapshot.operation : null
-  return { ...snapshot, operation, lastAttempt: operation ? snapshot.lastAttempt : null }
+  const hasCurrentAttempt = operation?.timeline.some(({ id }) => ['provider-pending', 'lost', 'recovered'].includes(id))
+  return { ...snapshot, operation, lastAttempt: hasCurrentAttempt ? snapshot.lastAttempt : null }
 }
 
 function DemoIdentifier({ label, value, href }: { label: string; value: string | number | null | undefined; href?: string }) {
@@ -582,6 +583,8 @@ function DemoPage() {
   const visibleOperationId = useRef<string | null>(null)
 
   const operation = snapshot?.operation || null
+  const operationStatus = operation?.status
+  const operationTimelineLength = operation?.timeline.length
   const isDone = operation?.status === 'FINALIZED' || operation?.status === 'FAILED'
   const isRecoverable = ['PROOF_SUBMITTING', 'RECOVERY_REQUIRED', 'SUBMITTING', 'RECEIPT_SIGNED'].includes(operation?.status || '')
   const recoveredEvent = operation?.timeline.find(({ id }) => id === 'recovered')
@@ -595,7 +598,7 @@ function DemoPage() {
         body: JSON.stringify(body),
       })
       if (result.snapshot) {
-        if (path === '/api/release/start' && result.snapshot.operation) visibleOperationId.current = result.snapshot.operation.operationId
+        if (path === '/api/release/start' && result.accepted && result.snapshot.operation) visibleOperationId.current = result.snapshot.operation.operationId
         setSnapshot(demoSnapshot(result.snapshot, visibleOperationId.current))
       }
       return result
@@ -642,6 +645,11 @@ function DemoPage() {
     }, 0)
     return () => window.clearTimeout(recoveryTimer)
   }, [operation, run, runState])
+
+  useEffect(() => {
+    if (runState !== 'running' || !operationStatus) return
+    document.querySelector<HTMLElement>('.demo-step-active')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [operationStatus, operationTimelineLength, runState])
 
   useEffect(() => {
     if (runState === 'running' && operation && operation.operationId === runOperationId.current && ['FINALIZED', 'FAILED'].includes(operation.status)) {
@@ -779,7 +787,7 @@ function DemoPage() {
               <DemoIdentifier label="Azure deployment resource ID" value={operation?.provider.operationId} href={operation?.provider.operationId ? azureResourceUrl(operation.provider.operationId) : undefined} />
               <DemoIdentifier label="Request token" value={operation?.provider.requestToken} />
               <DemoIdentifier label="Provider" value={operation?.providerId} />
-              <DemoIdentifier label="Effects recorded" value={operation ? snapshot?.provider.effectCount : undefined} />
+              <DemoIdentifier label="Effects recorded" value={operation?.provider.operationId ? snapshot?.provider.effectCount : undefined} />
             </div>
           </DemoStep>
 
@@ -788,7 +796,7 @@ function DemoPage() {
               <DemoIdentifier label="Recovery result" value={snapshot?.lastAttempt?.code || (recoveredEvent ? 'RECOVERED' : undefined)} />
               <DemoIdentifier label="Token binding" value={operation ? operation.provider.requestToken === operation.operationId ? 'MATCH · no duplicate' : 'MISMATCH' : undefined} />
               <DemoIdentifier label="Recovered at" value={recoveredEvent ? time(recoveredEvent.at) : undefined} />
-              <DemoIdentifier label="Effect count after recovery" value={operation ? snapshot?.provider.effectCount : undefined} />
+              <DemoIdentifier label="Effect count after recovery" value={operation?.provider.operationId ? snapshot?.provider.effectCount : undefined} />
             </div>
           </DemoStep>
 
