@@ -158,6 +158,18 @@ independent issuers and published as `evidence-facts-json` plus
 `evidence-adapter-public-key`. The broker refuses to start without that
 bundle.
 
+Provision the production issuer boundary with:
+
+```sh
+node ops/azure/provision-production-issuers.js
+```
+
+This creates one user-assigned Azure identity, non-exportable signing key, and
+dedicated Key Vault per issuer role, then publishes the public registry as
+`production-issuer-registry-json`. The issuer workloads still have to submit
+real payloads and ciphertexts; the provisioning command never creates
+evidence facts.
+
 For the live demo environment only, `node ops/azure/demo-evidence.js` creates
 separate non-exportable Azure Key Vault issuer keys and signs facts from the
 checked-in lockfiles, passing release checks, the live Azure region, and the
@@ -174,13 +186,13 @@ provides the attestation boundary. No AWS account-side rollout is required.
 
 ## Pending implementation
 
-- The live Azure broker is waiting for the four independent issuer systems to
-  supply real SBOM, model-evaluation, residency, and approval payloads,
-  ciphertexts, and separate signing keys. Publish the verified bundle with
-  `ops/azure/publish-evidence.sh`; the rollout refuses to proceed without it.
-- The Azure `api-token`, HTTPS termination, Vercel gateway, and backend URL are
-  configured. `/api/health` and the end-to-end demo become live after the
-  signed EvidenceFacts bundle is published.
+- The production issuer identities are provisioned separately from the demo,
+  but their independent workloads still need to supply real SBOM,
+  model-evaluation, residency, and approval payloads plus ciphertexts. Publish
+  the verified production bundle with `ops/azure/publish-evidence.sh`; the
+  rollout refuses to proceed without it.
+- The live demo intentionally remains on the clearly labeled Azure
+  operator-demo bundle until those independent facts replace it.
 
 To verify a saved receipt bundle or SQLite state:
 

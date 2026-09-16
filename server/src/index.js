@@ -105,6 +105,52 @@ function configuredBuildFact() {
   return fact
 }
 
+function configuredProductionIssuerRegistry() {
+  const raw = process.env.DEPLOYSEAL_PRODUCTION_ISSUER_REGISTRY_JSON
+  if (!raw) return null
+  let registry
+  try {
+    registry = JSON.parse(raw)
+  } catch {
+    throw Object.assign(new Error('DEPLOYSEAL_PRODUCTION_ISSUER_REGISTRY_JSON must contain valid JSON'), { code: 'INVALID_CONFIG' })
+  }
+  if (registry?.version !== 1 || registry.issuerClass !== 'production' || !Array.isArray(registry.issuers) || !registry.issuers.length) {
+    throw Object.assign(new Error('production issuer registry is invalid'), { code: 'INVALID_CONFIG' })
+  }
+  const seen = new Set()
+  for (const issuer of registry.issuers) {
+    if (!issuer?.keyId || !issuer.role || !issuer.identity?.principalId || !issuer.keyVault?.name || typeof issuer.publicKey !== 'string') {
+      throw Object.assign(new Error('production issuer registry entry is incomplete'), { code: 'INVALID_CONFIG' })
+    }
+    if (seen.has(issuer.keyId)) throw Object.assign(new Error('production issuer registry reuses a key id'), { code: 'INVALID_CONFIG' })
+    seen.add(issuer.keyId)
+    try {
+      createPublicKey(issuer.publicKey)
+    } catch {
+      throw Object.assign(new Error(`production issuer public key is invalid for ${issuer.keyId}`), { code: 'INVALID_CONFIG' })
+    }
+  }
+  return registry
+}
+
+function issuerProfile(facts, registry) {
+  const productionKeys = new Set(registry?.issuers.map(({ keyId }) => keyId) || [])
+  const productionFacts = facts.filter(({ signerKeyId }) => productionKeys.has(signerKeyId))
+  return {
+    mode: productionFacts.length === facts.length ? 'production' : productionFacts.length ? 'mixed' : 'operator-demo',
+    activeIssuerCount: productionFacts.length,
+    configuredIssuerCount: registry?.issuers.length || 0,
+    issuers: registry?.issuers.map(({ kind, role, keyId, identity, keyVault }) => ({
+      kind,
+      role,
+      keyId,
+      identityName: identity.name,
+      vaultName: keyVault.name,
+      active: productionKeys.has(keyId) && productionFacts.some((fact) => fact.signerKeyId === keyId),
+    })) || [],
+  }
+}
+
 const provider = useAws ? new AwsCloudFormationProvider() : new AzureArmProvider()
 const receiptSigner = useAws ? new AwsKmsReceiptSigner() : new AzureKeyVaultReceiptSigner()
 const azureAttestation = useAzure ? await AzureTeeAttestation.fromEnv() : null
@@ -113,6 +159,7 @@ if (useAws) required('DEPLOYSEAL_ENCLAVE_MEASUREMENT')
 const policy = configuredJson('DEPLOYSEAL_POLICY_JSON')
 const buildFact = configuredBuildFact()
 if (!buildFact) throw Object.assign(new Error('a signed BuildFact is required for provider mode'), { code: 'INVALID_CONFIG' })
+const productionIssuerRegistry = configuredProductionIssuerRegistry()
 const baseEvidence = {
   ...configuredJson('DEPLOYSEAL_EVIDENCE_JSON'),
   ...(buildFact
@@ -132,18 +179,18 @@ try {
   throw Object.assign(new Error(cause.message), { code: 'INVALID_CONFIG', cause })
 }
 if (!configuredFacts) throw Object.assign(new Error('signed EvidenceFacts and a verification key are required'), { code: 'INVALID_CONFIG' })
+const verifiedFacts = verifyEvidenceBundle(configuredFacts.bundle, configuredFacts.publicKeys, {
+  artifactDigest: baseEvidence.artifactDigest,
+  commitSha: baseEvidence.commitSha,
+  providerId: baseEvidence.providerId,
+  targetId: baseEvidence.targetId,
+  region: baseEvidence.region,
+  policyEpoch: policy.epoch,
+})
 const evidence = {
   ...baseEvidence,
-  ...evidenceFromFacts(
-    verifyEvidenceBundle(configuredFacts.bundle, configuredFacts.publicKeys, {
-      artifactDigest: baseEvidence.artifactDigest,
-      commitSha: baseEvidence.commitSha,
-      providerId: baseEvidence.providerId,
-      targetId: baseEvidence.targetId,
-      region: baseEvidence.region,
-      policyEpoch: policy.epoch,
-    }),
-  ),
+  ...evidenceFromFacts(verifiedFacts),
+  issuerProfile: issuerProfile(verifiedFacts, productionIssuerRegistry),
 }
 const proofVerifier = async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
 const finalizeVerifier = async ({ core, receiptHash, policyRoot }) => {

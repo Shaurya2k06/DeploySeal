@@ -349,6 +349,7 @@ export class DeploySealBroker {
           status: execution.status,
         })),
       },
+      evidence: this.evidence.issuerProfile || null,
       lastAttempt: publicAttempt(this.state.lastAttempt),
       auditCount: this.state.audit.length,
     }

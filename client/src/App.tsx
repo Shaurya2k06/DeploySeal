@@ -61,6 +61,20 @@ type Operation = {
   receipt: { hash: string; keyId: string; status: string } | null
 }
 
+type IssuerProfile = {
+  mode: 'production' | 'mixed' | 'operator-demo'
+  activeIssuerCount: number
+  configuredIssuerCount: number
+  issuers: {
+    kind: string
+    role: string
+    keyId: string
+    identityName: string
+    vaultName: string
+    active: boolean
+  }[]
+}
+
 type Snapshot = {
   mode: string
   contractAddress?: string | null
@@ -71,6 +85,7 @@ type Snapshot = {
     effectCount: number
     executions: { operationId: string; providerOperationId: string; status: string }[]
   }
+  evidence: IssuerProfile | null
   lastAttempt: { type: string; status: string; code: string; at: string } | null
   auditCount: number
 }
@@ -369,6 +384,7 @@ function LandingPage() {
         </a>
         <nav className="landing-nav" aria-label="Primary navigation">
           <a href="#why">Why DeploySeal</a>
+          <a href="#issuers">Issuers</a>
           <a href="#architecture">Architecture</a>
           <a href="#flow">The flow</a>
         </nav>
@@ -445,6 +461,24 @@ function LandingPage() {
                 <div className="wave-card-bottom"><span>{providerLabel}</span><span>ONE-USE OPERATION</span></div>
               </div>
             </article>
+          </div>
+        </section>
+
+        <section className="landing-section issuer-section" id="issuers">
+          <div className="landing-section-heading" data-aos="fade-up"><div><h2>Separate<br /><em>the issuers.</em></h2></div><p>Production evidence is signed by role-specific identities. Each issuer keeps its own non-exportable key and publishes only the fact needed for authorization.</p></div>
+          <div className="issuer-panel" data-aos="fade-up" data-aos-delay="100">
+            <div className="issuer-panel-top"><div><span>Issuer boundary</span><strong>{snapshot?.evidence?.mode === 'production' ? 'PRODUCTION' : snapshot?.evidence?.mode === 'mixed' ? 'MIXED' : 'OPERATOR DEMO'}</strong></div><b>{snapshot?.evidence?.activeIssuerCount || 0} / {snapshot?.evidence?.configuredIssuerCount || '—'} active</b></div>
+            <div className="issuer-list">
+              {snapshot?.evidence?.issuers.length ? snapshot.evidence.issuers.map((issuer) => (
+                <div className="issuer-row" key={issuer.keyId}>
+                  <span className={`issuer-marker ${issuer.active ? 'active' : ''}`} aria-hidden="true" />
+                  <div><strong>{issuer.role}</strong><span>{issuer.identityName}</span></div>
+                  <code>{issuer.keyId}</code>
+                  <em>{issuer.active ? 'ACTIVE' : 'READY'}</em>
+                </div>
+              )) : <p className="issuer-empty">Production issuer registry is not attached to this broker.</p>}
+            </div>
+            <p className="issuer-note">{snapshot?.evidence?.mode === 'production' ? 'All verified facts come from the registered production issuer identities.' : 'The live demo uses separate, non-exportable Azure operator-demo keys. Production identities are provisioned separately and must supply the release facts before this boundary becomes active.'}</p>
           </div>
         </section>
 

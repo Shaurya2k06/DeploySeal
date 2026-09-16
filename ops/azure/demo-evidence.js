@@ -10,11 +10,11 @@ import { validateBuildFact } from '../../server/src/github.js'
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const vault = process.env.AZURE_KEY_VAULT_NAME || 'deploysealkv260912'
 const issuerKeys = {
-  sbom: 'deployseal-evidence-sbom-v1',
-  'model-eval': 'deployseal-evidence-model-v1',
-  residency: 'deployseal-evidence-residency-v1',
-  security: 'deployseal-evidence-security-v1',
-  governance: 'deployseal-evidence-governance-v1',
+  sbom: 'deployseal-operator-demo-sbom-v1',
+  'model-eval': 'deployseal-operator-demo-model-v1',
+  residency: 'deployseal-operator-demo-residency-v1',
+  security: 'deployseal-operator-demo-security-v1',
+  governance: 'deployseal-operator-demo-governance-v1',
 }
 
 function run(command, args, cwd = repo) {
@@ -154,15 +154,15 @@ function main() {
   const facts = [
     fact({
       kind: 'sbom', role: 'supply-chain', signerKeyId: issuerKeys.sbom,
-      payload: { source: 'npm', commitSha: buildFact.commitSha, packages: sbom() }, scope, subjectArtifactDigest,
+      payload: { issuerClass: 'operator-demo', source: 'npm', commitSha: buildFact.commitSha, packages: sbom() }, scope, subjectArtifactDigest,
     }),
     fact({
       kind: 'model-eval', role: 'release-validation', signerKeyId: issuerKeys['model-eval'],
-      payload: { evaluator: 'DeploySeal release checks', commitSha: buildFact.commitSha, checks }, scope, subjectArtifactDigest,
+      payload: { issuerClass: 'operator-demo', evaluator: 'DeploySeal release checks', commitSha: buildFact.commitSha, checks }, scope, subjectArtifactDigest,
     }),
     fact({
       kind: 'residency', role: 'azure-residency', signerKeyId: issuerKeys.residency,
-      payload: { provider: 'azure', resourceGroup: target.name, location: target.location, provisioningState: target.properties?.provisioningState }, scope, subjectArtifactDigest,
+      payload: { issuerClass: 'operator-demo', provider: 'azure', resourceGroup: target.name, location: target.location, provisioningState: target.properties?.provisioningState }, scope, subjectArtifactDigest,
     }),
     fact({
       kind: 'approval', role: 'security', signerKeyId: issuerKeys.security,

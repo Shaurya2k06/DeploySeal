@@ -13,6 +13,7 @@ const secrets = {
   'build-adapter-public-key': 'DEPLOYSEAL_BUILD_ADAPTER_PUBLIC_KEY',
   'evidence-facts-json': 'DEPLOYSEAL_EVIDENCE_FACTS_JSON',
   'evidence-adapter-public-key': 'DEPLOYSEAL_EVIDENCE_ADAPTER_PUBLIC_KEY',
+  'production-issuer-registry-json': 'DEPLOYSEAL_PRODUCTION_ISSUER_REGISTRY_JSON',
   'api-token': 'DEPLOYSEAL_API_TOKEN',
 }
 

@@ -6,7 +6,7 @@ env_file=/etc/deployseal/server.env
 secret_dir=/etc/deployseal/secrets
 
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
-for name in contract-address server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key; do
+for name in contract-address server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key production-issuer-registry-json build-fact-json build-adapter-public-key; do
   if ! az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query id --output tsv --only-show-errors >/dev/null; then
     printf 'missing required Azure Key Vault secret: %s\n' "$name" >&2
     exit 1
@@ -38,6 +38,7 @@ set_env() {
 set_env DEPLOYSEAL_MIDNIGHT_STATE_ID deployseal-private-state-v2
 set_env DEPLOYSEAL_MIDNIGHT_DB_PATH /var/lib/deployseal/midnight
 set_env DEPLOYSEAL_STATE_PATH /var/lib/deployseal/state.sqlite
+set_env DEPLOYSEAL_PRODUCTION_ISSUER_REGISTRY_FILE /etc/deployseal/secrets/production-issuer-registry-json
 set_env DEPLOYSEAL_ALLOW_NEW_OPERATION true
 set_env DEPLOYSEAL_CRASH_MODE kill
 set_env DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION true
@@ -50,13 +51,13 @@ set_env DEPLOYSEAL_ATTESTATION_MAX_AGE_SECONDS 300
 chmod 0640 "$env_file"
 chown root:deployseal "$env_file"
 
-for name in contract-address server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key; do
+for name in contract-address server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key production-issuer-registry-json build-fact-json build-adapter-public-key; do
   temporary="$secret_dir/$name.tmp.$$"
   az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query value --output tsv --only-show-errors >"$temporary"
   mv -f "$temporary" "$secret_dir/$name"
 done
-chown deployseal:deployseal "$secret_dir/contract-address" "$secret_dir/server-policy-json" "$secret_dir/server-evidence-json" "$secret_dir/evidence-facts-json" "$secret_dir/evidence-adapter-public-key" "$secret_dir/build-fact-json" "$secret_dir/build-adapter-public-key"
-chmod 0600 "$secret_dir/contract-address" "$secret_dir/server-policy-json" "$secret_dir/server-evidence-json" "$secret_dir/evidence-facts-json" "$secret_dir/evidence-adapter-public-key" "$secret_dir/build-fact-json" "$secret_dir/build-adapter-public-key"
+chown deployseal:deployseal "$secret_dir/contract-address" "$secret_dir/server-policy-json" "$secret_dir/server-evidence-json" "$secret_dir/evidence-facts-json" "$secret_dir/evidence-adapter-public-key" "$secret_dir/production-issuer-registry-json" "$secret_dir/build-fact-json" "$secret_dir/build-adapter-public-key"
+chmod 0600 "$secret_dir/contract-address" "$secret_dir/server-policy-json" "$secret_dir/server-evidence-json" "$secret_dir/evidence-facts-json" "$secret_dir/evidence-adapter-public-key" "$secret_dir/production-issuer-registry-json" "$secret_dir/build-fact-json" "$secret_dir/build-adapter-public-key"
 
 cat >/usr/local/bin/deployseal-attest <<'EOF'
 #!/bin/sh
@@ -114,7 +115,7 @@ set -eu
 umask 077
 az login --identity --allow-no-subscriptions --only-show-errors >/dev/null
 changed=0
-for name in server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key build-fact-json build-adapter-public-key api-token; do
+for name in server-policy-json server-evidence-json evidence-facts-json evidence-adapter-public-key production-issuer-registry-json build-fact-json build-adapter-public-key api-token; do
   temporary="/etc/deployseal/secrets/$name.tmp.$$"
   if ! az keyvault secret show --vault-name deploysealkv260912 --name "$name" --query value --output tsv --only-show-errors >"$temporary" 2>/dev/null; then
     rm -f "$temporary"

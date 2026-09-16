@@ -830,6 +830,127 @@ code {
   letter-spacing: -.01em;
 }
 
+.issuer-panel {
+  margin-top: 64px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: var(--feature-shadow);
+}
+
+.issuer-panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 23px 26px;
+  border-bottom: 1px solid var(--line);
+}
+
+.issuer-panel-top div {
+  display: grid;
+  gap: 8px;
+}
+
+.issuer-panel-top span,
+.issuer-panel-top b,
+.issuer-row code,
+.issuer-row em,
+.issuer-empty,
+.issuer-note {
+  color: var(--charcoal);
+  font: 600 10px/1.2 var(--mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.issuer-panel-top strong {
+  color: var(--blue);
+  font: 600 18px/1 var(--display);
+  letter-spacing: -.03em;
+}
+
+.issuer-panel-top b {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.issuer-list {
+  padding: 0 26px;
+}
+
+.issuer-row {
+  display: grid;
+  grid-template-columns: 10px minmax(170px, 1fr) minmax(220px, .9fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.issuer-marker {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.issuer-marker.active {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px rgba(37, 151, 208, .12);
+}
+
+.issuer-row > div {
+  display: grid;
+  gap: 5px;
+}
+
+.issuer-row strong {
+  color: var(--obsidian);
+  font: 600 15px/1.1 var(--display);
+}
+
+.issuer-row > div span {
+  overflow: hidden;
+  color: var(--charcoal);
+  font: 10px/1.2 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issuer-row code {
+  overflow: hidden;
+  color: var(--blue);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.issuer-row em {
+  color: var(--slate);
+  font-style: normal;
+}
+
+.issuer-row em:first-letter {
+  color: var(--blue);
+}
+
+.issuer-empty,
+.issuer-note {
+  margin: 0;
+  padding: 22px 0;
+  color: var(--slate);
+  font-weight: 500;
+  text-transform: none;
+}
+
+.issuer-note {
+  padding: 20px 26px 23px;
+  border-top: 1px solid var(--line);
+}
+
 .drop-zone,
 .wave-card {
   min-height: 174px;
@@ -1971,6 +2092,40 @@ footer {
   .feature-card {
     min-height: 0;
     padding: 26px;
+  }
+
+  .issuer-panel {
+    margin-top: 42px;
+  }
+
+  .issuer-panel-top {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px;
+  }
+
+  .issuer-list {
+    padding: 0 20px;
+  }
+
+  .issuer-row {
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .issuer-row code {
+    grid-column: 2;
+  }
+
+  .issuer-row em {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+
+  .issuer-note {
+    padding-right: 20px;
+    padding-left: 20px;
   }
 
   .flow-steps {
