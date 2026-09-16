@@ -131,7 +131,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
-  const body = (await response.json()) as T & { error?: { message?: string } }
+  let body: T & { error?: { message?: string } }
+  try {
+    body = JSON.parse(await response.text()) as T & { error?: { message?: string } }
+  } catch {
+    throw new Error(response.ok ? 'Release broker returned an invalid response' : `Release broker unavailable (${response.status})`)
+  }
   if (!response.ok && !('snapshot' in body)) {
     throw new Error(body.error?.message || 'Request failed')
   }
