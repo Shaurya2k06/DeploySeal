@@ -166,9 +166,15 @@ node ops/azure/provision-production-issuers.js
 
 This creates one user-assigned Azure identity, non-exportable signing key, and
 dedicated Key Vault per issuer role, then publishes the public registry as
-`production-issuer-registry-json`. The issuer workloads still have to submit
-real payloads and ciphertexts; the provisioning command never creates
-evidence facts.
+`production-issuer-registry-json`. The attached issuer runner evaluates the
+current release and Azure target, signs each fact with its role-specific
+identity, and prints a verified bundle for publication:
+
+```sh
+node ops/azure/production-evidence.js
+```
+
+The provisioning command never creates evidence facts.
 
 For the live demo environment only, `node ops/azure/demo-evidence.js` creates
 separate non-exportable Azure Key Vault issuer keys and signs facts from the
@@ -186,13 +192,10 @@ provides the attestation boundary. No AWS account-side rollout is required.
 
 ## Pending implementation
 
-- The production issuer identities are provisioned separately from the demo,
-  but their independent workloads still need to supply real SBOM,
-  model-evaluation, residency, and approval payloads plus ciphertexts. Publish
-  the verified production bundle with `ops/azure/publish-evidence.sh`; the
-  rollout refuses to proceed without it.
-- The live demo intentionally remains on the clearly labeled Azure
-  operator-demo bundle until those independent facts replace it.
+- Independent operational ownership and custody for the security and
+  governance issuers remains a production-hardening step; the live Azure
+  bundle is currently issued by separate managed identities in this
+  subscription.
 
 To verify a saved receipt bundle or SQLite state:
 
