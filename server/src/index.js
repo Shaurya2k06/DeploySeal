@@ -146,7 +146,15 @@ const evidence = {
   ),
 }
 const proofVerifier = async ({ core, policyRoot }) => (await midnightClient()).reserve(core, policyRoot)
-const finalizeVerifier = async ({ core, receiptHash, policyRoot }) => (await midnightClient()).finalize(core, receiptHash, policyRoot)
+const finalizeVerifier = async ({ core, receiptHash, policyRoot }) => {
+  const client = await midnightClient()
+  try {
+    return await client.finalize(core, receiptHash, policyRoot)
+  } finally {
+    await client.close()
+    midnightClientPromise = undefined
+  }
+}
 const attestationCheck = azureAttestation
   ? ({ operationDigest }) => process.env.DEPLOYSEAL_REQUIRE_OPERATION_ATTESTATION === 'true'
     ? azureAttestation.attestChallenge(operationDigest.toString('hex'))
