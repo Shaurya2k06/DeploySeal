@@ -54,7 +54,7 @@ function publicKeyPem(jwk) {
 }
 
 function signWithIssuer(issuer, digest) {
-  az(['login', '--identity', '--username', issuer.identity.clientId, '--allow-no-subscriptions'])
+  az(['login', '--identity', '--client-id', issuer.identity.clientId, '--allow-no-subscriptions'])
   const response = json(az([
     'keyvault', 'key', 'sign', '--vault-name', issuer.keyVault.name, '--name', issuer.keyVault.keyName,
     '--algorithm', 'RS256', '--digest', createHash('sha256').update(digest).digest('base64'), '--output', 'json',
