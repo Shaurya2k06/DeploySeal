@@ -218,6 +218,11 @@ function demoStepState(snapshot: Snapshot | null, operation: Operation | null, s
   return operation.status === 'RECEIPT_SIGNED' ? 'active' : 'pending'
 }
 
+function demoSnapshot(snapshot: Snapshot, operationId: string | null): Snapshot {
+  const operation = operationId && snapshot.operation?.operationId === operationId ? snapshot.operation : null
+  return { ...snapshot, operation, lastAttempt: operation ? snapshot.lastAttempt : null }
+}
+
 function DemoIdentifier({ label, value, href }: { label: string; value: string | number | null | undefined; href?: string }) {
   const display = value === null || value === undefined || value === '' ? '—' : String(value)
   return (
@@ -574,6 +579,7 @@ function DemoPage() {
   const previousOperationId = useRef<string | null>(null)
   const runOperationId = useRef<string | null>(null)
   const recoveryRequested = useRef(false)
+  const visibleOperationId = useRef<string | null>(null)
 
   const operation = snapshot?.operation || null
   const isDone = operation?.status === 'FINALIZED' || operation?.status === 'FAILED'
@@ -588,7 +594,10 @@ function DemoPage() {
         method: 'POST',
         body: JSON.stringify(body),
       })
-      if (result.snapshot) setSnapshot(result.snapshot)
+      if (result.snapshot) {
+        if (path === '/api/release/start' && result.snapshot.operation) visibleOperationId.current = result.snapshot.operation.operationId
+        setSnapshot(demoSnapshot(result.snapshot, visibleOperationId.current))
+      }
       return result
     } catch (requestError) {
       if (!options.suppressError) setError(requestError instanceof Error ? requestError.message : 'Request failed')
@@ -600,7 +609,7 @@ function DemoPage() {
 
   useEffect(() => {
     request<Snapshot>('/api/release')
-      .then(setSnapshot)
+      .then((next) => setSnapshot(demoSnapshot(next, visibleOperationId.current)))
       .catch((requestError: Error) => setError(requestError.message))
   }, [])
 
@@ -609,8 +618,9 @@ function DemoPage() {
       request<Snapshot>('/api/release').then((next) => {
         if (runState === 'running' && next.operation && next.operation.operationId !== previousOperationId.current) {
           runOperationId.current = next.operation.operationId
+          visibleOperationId.current = next.operation.operationId
         }
-        setSnapshot(next)
+        setSnapshot(demoSnapshot(next, visibleOperationId.current))
       }).catch(() => undefined)
     }, 3000)
     return () => window.clearInterval(timer)
@@ -655,6 +665,7 @@ function DemoPage() {
 
     previousOperationId.current = operation?.operationId || null
     runOperationId.current = null
+    visibleOperationId.current = null
     setDisclosure(null)
     setReceiptState('idle')
     setRunState('running')
@@ -768,7 +779,7 @@ function DemoPage() {
               <DemoIdentifier label="Azure deployment resource ID" value={operation?.provider.operationId} href={operation?.provider.operationId ? azureResourceUrl(operation.provider.operationId) : undefined} />
               <DemoIdentifier label="Request token" value={operation?.provider.requestToken} />
               <DemoIdentifier label="Provider" value={operation?.providerId} />
-              <DemoIdentifier label="Effects recorded" value={snapshot?.provider.effectCount} />
+              <DemoIdentifier label="Effects recorded" value={operation ? snapshot?.provider.effectCount : undefined} />
             </div>
           </DemoStep>
 
@@ -777,7 +788,7 @@ function DemoPage() {
               <DemoIdentifier label="Recovery result" value={snapshot?.lastAttempt?.code || (recoveredEvent ? 'RECOVERED' : undefined)} />
               <DemoIdentifier label="Token binding" value={operation ? operation.provider.requestToken === operation.operationId ? 'MATCH · no duplicate' : 'MISMATCH' : undefined} />
               <DemoIdentifier label="Recovered at" value={recoveredEvent ? time(recoveredEvent.at) : undefined} />
-              <DemoIdentifier label="Effect count after recovery" value={snapshot?.provider.effectCount} />
+              <DemoIdentifier label="Effect count after recovery" value={operation ? snapshot?.provider.effectCount : undefined} />
             </div>
           </DemoStep>
 
@@ -810,7 +821,7 @@ function DemoPage() {
         <section className="demo-safety" aria-label="Optional safety checks">
           <div><span>Optional checks</span><p>Exercise the rejection paths after the main trace.</p></div>
           <div className="demo-safety-actions"><button className="button button-outline" disabled={Boolean(busy)} onClick={() => run('/api/release/start', { scenario: 'invalid' })} type="button">Block wrong target</button><button className="button button-outline" disabled={!operation || Boolean(busy)} onClick={() => run('/api/release/replay')} type="button">Reject replay</button></div>
-          {snapshot?.lastAttempt && <code>{snapshot.lastAttempt.code} · {time(snapshot.lastAttempt.at)}</code>}
+          {operation && snapshot?.lastAttempt && <code>{snapshot.lastAttempt.code} · {time(snapshot.lastAttempt.at)}</code>}
         </section>
       </main>
     </div>
